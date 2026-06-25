@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Last updated:** 2026-06-24
-**Component:** standalone MCP server (`filebridge_mcp.py`)
+**Component:** standalone MCP server (`filebridge_mcp/` package)
 
 ---
 
@@ -216,7 +216,7 @@ The one assumption that must be validated before relying on this server: **that 
 
 ## 10. Testing & Evaluation
 
-**Static.** `python -m py_compile filebridge_mcp.py`; `python filebridge_mcp.py --help` to confirm imports resolve and all tools register.
+**Static.** `uv run pytest` (sandbox containment + type detection, SDK-free); `uv run filebridge-mcp --help` (or `python -m filebridge_mcp --help`) to confirm imports resolve and all tools register.
 
 **Runtime smoke (validated).** Directory listing with type detection; sliced text reads returning correct `next_offset`; magic-byte image detection; the traversal guard rejecting `../../etc/passwd`; `stat`. Video paths require `ffmpeg` and are exercised separately.
 
@@ -264,16 +264,18 @@ stdio (typical local host config):
 ```json
 {
   "filebridge": {
-    "command": "python",
-    "args": ["filebridge_mcp.py", "--root", "/path/to/folder"]
+    "command": "uv",
+    "args": ["run", "filebridge-mcp", "--root", "/path/to/folder"]
   }
 }
 ```
 
+(Or `"command": "python", "args": ["-m", "filebridge_mcp", "--root", "/path/to/folder"]`.)
+
 HTTP (remote/multi-client):
 
-```
-python filebridge_mcp.py --root /path/to/folder --http --port 8000
+```bash
+uv run filebridge-mcp --root /path/to/folder --http --port 8000
 ```
 
-The root may also be supplied via the `MCP_ROOT` environment variable.
+The root may also be supplied via the `MCP_ROOT` environment variable; `--root` takes precedence.
