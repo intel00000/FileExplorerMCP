@@ -110,6 +110,13 @@ def test_build_server_sets_host_and_port(tmp_path):
     assert (mcp.settings.host, mcp.settings.port) == ("0.0.0.0", 1234)
 
 
+def test_build_server_sets_http_path(tmp_path):
+    assert (
+        build_server(Root(tmp_path), http_path="/").settings.streamable_http_path == "/"
+    )
+    assert build_server(Root(tmp_path)).settings.streamable_http_path == "/mcp"
+
+
 def test_no_auth_by_default(tmp_path):
     assert build_server(Root(tmp_path)).settings.auth is None
 

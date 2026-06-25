@@ -35,6 +35,7 @@ def build_server(
     frames_dir: "Path | None" = None,
     host: str = "127.0.0.1",
     port: int = 8000,
+    http_path: str = "/mcp",
     auth_token: "str | None" = None,
 ) -> FastMCP:
     """Create a FastMCP server with the tool catalog bound to `root`.
@@ -42,8 +43,9 @@ def build_server(
     The server is read-only unless `allow_write` / `allow_delete` opt the
     mutating tools in (see `register_all`). `frames_dir` overrides where video
     file-output mode writes frames (default ``<root>/.filebridge_frames``).
-    `host`/`port` configure the HTTP bind; `auth_token`, if given, requires that
-    shared-secret bearer token on every HTTP request (HTTP transport only).
+    `host`/`port`/`http_path` configure the HTTP bind and endpoint path;
+    `auth_token`, if given, requires that shared-secret bearer token on every
+    HTTP request (HTTP transport only).
     """
     auth_kwargs: dict = {}
     if auth_token:
@@ -54,6 +56,7 @@ def build_server(
         instructions=INSTRUCTIONS,
         host=host,
         port=port,
+        streamable_http_path=http_path,
         **auth_kwargs,
     )
     register_all(
@@ -64,6 +67,30 @@ def build_server(
         frames_dir=frames_dir,
     )
     return mcp
+
+
+def _serve_http(mcp: FastMCP, host: str, port: int, cors_origins: "list[str]") -> None:
+    """Serve the streamable-HTTP app, adding CORS when origins are given.
+
+    Browser-based MCP clients are subject to the same-origin policy; without CORS
+    headers a cross-origin fetch fails with a NetworkError before it ever reaches
+    the server. `expose_headers=['Mcp-Session-Id']` is required so browser JS can
+    read the session id that streamable HTTP returns.
+    """
+    import uvicorn
+
+    app = mcp.streamable_http_app()
+    if cors_origins:
+        from starlette.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["*"],
+            expose_headers=["Mcp-Session-Id"],
+        )
+    uvicorn.run(app, host=host, port=port, log_level=mcp.settings.log_level.lower())
 
 
 def main() -> None:
@@ -85,6 +112,11 @@ def main() -> None:
         help="Enable move / delete, the destructive verbs (off by default).",
     )
     ap.add_argument(
+        "--allow-all",
+        action="store_true",
+        help="Enable every mutating tool — shorthand for --allow-write --allow-delete.",
+    )
+    ap.add_argument(
         "--frames-dir",
         default=None,
         help="Where video output='file' mode writes frames "
@@ -102,6 +134,20 @@ def main() -> None:
     )
     ap.add_argument("--port", type=int, default=8000, help="Port for --http mode.")
     ap.add_argument(
+        "--http-path",
+        default="/mcp",
+        help="HTTP endpoint path (default /mcp). Clients connect to "
+        "http://<host>:<port><path>; set / if your client posts to the root.",
+    )
+    ap.add_argument(
+        "--cors-origin",
+        action="append",
+        metavar="ORIGIN",
+        help="Allow browser requests from this Origin (repeatable; comma-separated "
+        "OK; '*' for any). Required for browser-based MCP clients — without it a "
+        "cross-origin fetch fails with NetworkError. Exposes the Mcp-Session-Id header.",
+    )
+    ap.add_argument(
         "--auth-token",
         default=os.environ.get("FILEBRIDGE_AUTH_TOKEN"),
         help="Require this shared-secret bearer token on HTTP requests "
@@ -109,6 +155,13 @@ def main() -> None:
         "var (preferred — keeps the secret out of the process list). HTTP mode only.",
     )
     args = ap.parse_args()
+
+    allow_write = args.allow_write or args.allow_all
+    allow_delete = args.allow_delete or args.allow_all
+
+    cors_origins: list[str] = []
+    for item in args.cors_origin or []:
+        cors_origins.extend(o.strip() for o in item.split(",") if o.strip())
 
     if args.auth_token and not args.http:
         print(
@@ -125,23 +178,25 @@ def main() -> None:
     auth_token = args.auth_token if args.http else None
     mcp = build_server(
         root,
-        allow_write=args.allow_write,
-        allow_delete=args.allow_delete,
+        allow_write=allow_write,
+        allow_delete=allow_delete,
         frames_dir=frames_dir,
         host=args.host,
         port=args.port,
+        http_path=args.http_path,
         auth_token=auth_token,
     )
 
     enabled = ["read-only core"]
-    if args.allow_write:
+    if allow_write:
         enabled.append("write")
-    if args.allow_delete:
+    if allow_delete:
         enabled.append("delete")
     if args.http:
-        transport = (
-            f"http://{args.host}:{args.port} (auth: {'on' if auth_token else 'off'})"
-        )
+        extras = f"auth: {'on' if auth_token else 'off'}"
+        if cors_origins:
+            extras += f", cors: {','.join(cors_origins)}"
+        transport = f"http://{args.host}:{args.port}{args.http_path} ({extras})"
     else:
         transport = "stdio"
     print(
@@ -150,7 +205,7 @@ def main() -> None:
     )
 
     if args.http:
-        mcp.run(transport="streamable-http")
+        _serve_http(mcp, args.host, args.port, cors_origins)
     else:
         mcp.run()
 

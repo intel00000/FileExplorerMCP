@@ -22,12 +22,14 @@ uv sync --extra all     # also Pillow (image downscale) + PyMuPDF (PDF)
 uv run filebridge-mcp --root /path/to/folder                      # read-only
 uv run filebridge-mcp --root /path/to/folder --allow-write        # + write_file/make_dir
 uv run filebridge-mcp --root /path/to/folder --allow-write --allow-delete   # + move/delete
+uv run filebridge-mcp --root /path/to/folder --allow-all          # + every mutating tool
 ```
 
 **The server is read-only by default.** The mutating tools are not even registered
 unless you opt in at launch: `--allow-write` enables `write_file`/`make_dir`,
-`--allow-delete` enables `move`/`delete`. An unregistered tool is invisible to the
-model — a stronger guarantee than trusting the host to honor `destructiveHint`.
+`--allow-delete` enables `move`/`delete`, and `--allow-all` enables both. An
+unregistered tool is invisible to the model — a stronger guarantee than trusting
+the host to honor `destructiveHint`.
 
 Or with plain pip:
 
@@ -53,6 +55,24 @@ Optionally require a shared-secret bearer token with `--auth-token <token>` (or 
 `FILEBRIDGE_AUTH_TOKEN` env var — preferred, since CLI args are visible in the
 process list); clients then send `Authorization: Bearer <token>` and anything else
 gets `401`. Auth applies to HTTP only.
+
+**Endpoint path:** the MCP endpoint is at **`/mcp`**, so point your client at
+`http://<host>:<port>/mcp` (not the bare host). Use `--http-path /` if your client
+insists on posting to the root. The startup banner prints the exact URL.
+
+**Browser-based clients (CORS):** a web MCP client running on a different origin
+(e.g. `http://127.0.0.1:8080`) is blocked by the same-origin policy — the fetch
+fails with `NetworkError` and no request reaches the server. Allow it with
+`--cors-origin`:
+
+```bash
+uv run filebridge-mcp --root /path --http --cors-origin http://127.0.0.1:8080  # one origin
+uv run filebridge-mcp --root /path --http --cors-origin '*'                    # any origin (dev only)
+```
+
+`--cors-origin` is repeatable (or comma-separated) and exposes the `Mcp-Session-Id`
+header browsers need. Non-browser clients (Claude Desktop, llama-server, curl) don't
+need it.
 
 The root may also be supplied via the `MCP_ROOT` environment variable; `--root`
 takes precedence.
