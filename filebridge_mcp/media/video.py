@@ -35,12 +35,33 @@ def duration(p: Path) -> float:
     return float(dur) if dur else 0.0
 
 
-def extract_frame(p: Path, t: float, max_dim: Optional[int]) -> bytes:
-    """Grab one PNG frame at time `t` (seconds). Fast keyframe seek (-ss before -i)."""
+def norm_format(fmt: str) -> str:
+    """Normalize a caller format string to 'png' or 'jpeg'."""
+    f = (fmt or "png").lower()
+    return "jpeg" if f in ("jpg", "jpeg") else "png"
+
+
+def _jpeg_qscale(quality: int) -> int:
+    """Map a 1..100 quality (higher=better) to ffmpeg mjpeg -q:v (2=best..31=worst)."""
+    q = max(1, min(100, int(quality)))
+    return max(2, min(31, round(2 + (100 - q) * (31 - 2) / 99)))
+
+
+def extract_frame(p: Path, t: float, max_dim: Optional[int],
+                  fmt: str = "png", quality: int = 85) -> bytes:
+    """Grab one frame at time `t` (seconds). Fast keyframe seek (-ss before -i).
+
+    `fmt` is 'png' (lossless) or 'jpeg' (far smaller; `quality` 1..100 applies).
+    """
+    fmt = norm_format(fmt)
     cmd = ["ffmpeg", "-loglevel", "error", "-ss", f"{max(t, 0):.3f}", "-i", str(p), "-frames:v", "1"]
     if max_dim:
         cmd += ["-vf", f"scale='min({int(max_dim)},iw)':-2"]
-    cmd += ["-f", "image2", "-c:v", "png", "-"]
+    if fmt == "jpeg":
+        cmd += ["-c:v", "mjpeg", "-q:v", str(_jpeg_qscale(quality))]
+    else:
+        cmd += ["-c:v", "png"]
+    cmd += ["-f", "image2", "-"]
     res = subprocess.run(cmd, capture_output=True)
     if res.returncode != 0 or not res.stdout:
         raise RuntimeError(res.stderr.decode(errors="replace").strip()[:300] or "ffmpeg produced no frame")

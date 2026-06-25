@@ -34,3 +34,6 @@ Thumbs.db
 # Project scratch
 scratch/
 *.log
+
+# Video file-output cache (default frames dir)
+.filebridge_frames/

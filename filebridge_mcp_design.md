@@ -154,15 +154,20 @@ Delete a file, or a directory (`recursive=true` required for a non-empty directo
 **`video_info(path)`** — RO
 Probe a media file so the model knows the time range it can sample. Returns `{path, duration_sec, width, height, fps, codec, has_audio}`. Call before `video_frames` to pick sensible timestamps.
 
-**`video_frame(path, timestamp, max_dimension=1024)`** — RO
-Return a single frame at `timestamp` (seconds) as an image. Intended for **agentic seeking** — narrow toward a moment by repeated calls (e.g. binary-searching for a title card). Returns an image, or a JSON error.
+**`video_frame(path, timestamp=null, percent=null, max_dimension=1024, format="png", quality=85, output="inline")`** — RO
+Return a single frame as an image. Seek by absolute `timestamp` (seconds) **or** by `percent` of the duration (e.g. `percent=60` → the 60% mark; overrides `timestamp`). Intended for **agentic seeking** — narrow toward a moment by repeated calls (e.g. binary-searching for a title card). Returns an image (`output="inline"`), a JSON `{frame_path}` (`output="file"`), or a JSON error.
 
-**`video_frames(path, start=0, end=null, count=8, max_dimension=1024)`** — RO
-The **time-slice** view: evenly sample `count` frames (≤ 64) across `[start, end]` (end defaults to end of video) and return them as an ordered set. The first list element is a JSON summary naming each frame's timestamp in order; the remaining elements are the frame images. Every frame is encoded by the vision model in full, so callers should keep `count` modest.
+**`video_frames(path, start=0, end=null, count=8, timestamps=null, max_dimension=1024, format="png", quality=85, output="inline")`** — RO
+The **slice / set** view: either evenly sample `count` frames (≤ 64) across `[start, end]`, or grab an explicit `timestamps=[…]` list (overrides the slice). Ordered. With `output="inline"` the first list element is a JSON summary of the timestamps and the rest are images; with `output="file"` a single JSON object lists each frame's saved path. Every inline frame is encoded by the vision model in full, so keep `count` modest.
+
+**`video_contact_sheet(path, count=12, cols=4, start=0, end=null, max_dimension=1024, format="jpeg", quality=85, output="inline")`** — RO
+Tile `count` evenly-spaced, timestamp-labeled frames into **one** composite image (`cols` wide). A single image costs far fewer vision tokens than `count` separate frames — ideal for a first-pass overview before zooming in with `video_frame`. Requires Pillow. Returns an image, or a saved sheet path with `output="file"`.
+
+**Shared frame options.** `format` is `png` (lossless) or `jpeg` (much smaller; `quality` 1–100). `output="file"` materializes frames under the frames dir (`<root>/.filebridge_frames`, override with `--frames-dir`) and returns *paths* instead of base64 — this is the §9 mtmd fallback, exposed as a per-call option. It is the only write the read-only server performs.
 
 ### 5.4 Frame extraction mechanics
 
-Frames are pulled with `ffmpeg`, seeking with `-ss` placed *before* `-i` (fast approximate keyframe seek; frame-accurate seeking would decode from the start and is not worth the cost for this use). Frames are scaled in `ffmpeg` (`scale='min(W,iw)':-2`, preserving aspect, even height) and emitted as PNG to stdout — no temp files. Media metadata and duration come from `ffprobe -of json`.
+Frames are pulled with `ffmpeg`, seeking with `-ss` placed *before* `-i` (fast approximate keyframe seek; frame-accurate seeking would decode from the start and is not worth the cost for this use). Frames are scaled in `ffmpeg` (`scale='min(W,iw)':-2`, preserving aspect, even height) and emitted to stdout as PNG, or as MJPEG (`-q:v` derived from `quality`) when `format="jpeg"` — no temp files. The contact sheet extracts PNG tiles and composes/labels them with Pillow. Media metadata and duration come from `ffprobe -of json`.
 
 ---
 
@@ -210,7 +215,7 @@ The one assumption that must be validated before relying on this server: **that 
 
 **Validation procedure.** Point the host at the server and, as the very first test, call `video_frame` (or `read_file` on an image file). If the model describes the frame, the seam works and the whole design holds. If the model sees only a blob, the fix is host-side, not in this server.
 
-**Fallback if the seam fails.** Have the frame/image tools write outputs to disk under the root and return *paths*; the host then attaches those files as `image_url` content on the next turn (the chat endpoint accepts images directly). This is slightly less "agentic" but reliable and requires no server redesign — the tools already operate within the sandbox.
+**Fallback if the seam fails (now built in).** The frame tools accept `output="file"`: they write the frame/sheet to disk under the root (the frames dir) and return *paths* instead of base64. The host then attaches those files as `image_url` content on the next turn (the chat endpoint accepts images directly). This is slightly less "agentic" but reliable and needs no server redesign — the tools already operate within the sandbox. (Extending `output="file"` to `read_file` on still images is a small, obvious follow-up.)
 
 ---
 

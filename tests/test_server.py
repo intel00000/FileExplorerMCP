@@ -52,7 +52,7 @@ def test_allow_delete_only(tmp_path):
 def test_allow_both_registers_full_catalog(tmp_path):
     names = _tool_names(build_server(Root(tmp_path), allow_write=True, allow_delete=True))
     assert MUTATING <= names
-    assert len(names) == 13
+    assert len(names) == 14  # 10 read-only + 4 mutating
 
 
 def test_corrupt_image_returns_error_not_crash(tmp_path):

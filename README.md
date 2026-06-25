@@ -68,7 +68,20 @@ takes precedence.
 | Read    | `read_file`, `read_bytes` | type-dispatched projection; arbitrary byte hexdump |
 | Search  | `glob`, `grep` | both re-checked for sandbox containment; grep is text-only |
 | Mutate  | `write_file`, `make_dir`, `move`, `delete` | **opt-in only** — `--allow-write` / `--allow-delete`; `move`/`delete` carry `destructiveHint` |
-| Video   | `video_info`, `video_frame`, `video_frames` | probe, agentic single-frame seek, time-slice frame set |
+| Video   | `video_info`, `video_frame`, `video_frames`, `video_contact_sheet` | probe; single-frame seek (by seconds or `percent`); frame set (even slice or explicit `timestamps`); N frames tiled into one labeled image |
+
+### Video options
+
+The frame tools share these knobs:
+
+- **Seek** — `video_frame` takes `timestamp` (seconds) **or** `percent` (e.g. `percent=60` → the 60% mark). `video_frames` takes either an even `start`/`end`/`count` slice **or** an explicit `timestamps=[…]` list.
+- **Encoding** — `format='png'` (lossless) or `format='jpeg'` with `quality` 1–100. JPEG frames are a fraction of the base64 size.
+- **`output='inline' | 'file'`** — `inline` returns image content (default). **`file`** writes the frame(s) to the frames dir (`<root>/.filebridge_frames/`, override with `--frames-dir`) and returns *paths* instead of base64. This is the **mtmd fallback** (see below): a host that can't route inline images into the vision encoder can attach the saved file as a real image. It is the only path the read-only server writes to.
+- **`video_contact_sheet`** — tiles `count` evenly-spaced, timestamp-labeled frames into a single image (`cols` wide). One composite costs far fewer vision tokens than N separate frames; ideal for a first-pass overview. Needs Pillow.
+
+### The mtmd image seam (why `output='file'` exists)
+
+An MCP tool result carries an image as base64. Whether that base64 becomes *pixels for the vision encoder* or *inert text in the context window* is a host-side decision the server can't force (design §9). If inline images don't reach the model on your host, switch the frame/sheet tools to `output='file'` and have your frontend/backend attach the returned path as a real image on the next turn.
 
 ## Module layout
 

@@ -26,14 +26,16 @@ INSTRUCTIONS = (
 )
 
 
-def build_server(root: Root, *, allow_write: bool = False, allow_delete: bool = False) -> FastMCP:
+def build_server(root: Root, *, allow_write: bool = False, allow_delete: bool = False,
+                 frames_dir: "Path | None" = None) -> FastMCP:
     """Create a FastMCP server with the tool catalog bound to `root`.
 
     The server is read-only unless `allow_write` / `allow_delete` opt the
-    mutating tools in (see `register_all`).
+    mutating tools in (see `register_all`). `frames_dir` overrides where video
+    file-output mode writes frames (default ``<root>/.filebridge_frames``).
     """
     mcp = FastMCP("filebridge_mcp", instructions=INSTRUCTIONS)
-    register_all(mcp, root, allow_write=allow_write, allow_delete=allow_delete)
+    register_all(mcp, root, allow_write=allow_write, allow_delete=allow_delete, frames_dir=frames_dir)
     return mcp
 
 
@@ -46,12 +48,18 @@ def main() -> None:
                     help="Enable write_file / make_dir (off by default — server is read-only).")
     ap.add_argument("--allow-delete", action="store_true",
                     help="Enable move / delete, the destructive verbs (off by default).")
+    ap.add_argument("--frames-dir", default=None,
+                    help="Where video output='file' mode writes frames "
+                         "(default <root>/.filebridge_frames). This is the only path the "
+                         "read-only server writes to.")
     ap.add_argument("--http", action="store_true", help="Use streamable HTTP instead of stdio.")
     ap.add_argument("--port", type=int, default=8000, help="Port for --http mode.")
     args = ap.parse_args()
 
     root = Root(Path(args.root))
-    mcp = build_server(root, allow_write=args.allow_write, allow_delete=args.allow_delete)
+    frames_dir = Path(args.frames_dir).expanduser().resolve() if args.frames_dir else None
+    mcp = build_server(root, allow_write=args.allow_write, allow_delete=args.allow_delete,
+                       frames_dir=frames_dir)
 
     enabled = ["read-only core"]
     if args.allow_write:
