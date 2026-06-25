@@ -15,16 +15,31 @@ pytest.importorskip("mcp")
 if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
     pytest.skip("ffmpeg/ffprobe not on PATH", allow_module_level=True)
 
-from filebridge_mcp.sandbox import Root        # noqa: E402
+from filebridge_mcp.sandbox import Root  # noqa: E402
 from filebridge_mcp.server import build_server  # noqa: E402
+
+# Contact-sheet composition needs Pillow; skip those tests cleanly without it.
+needs_pil = pytest.mark.skipif(
+    __import__("importlib.util", fromlist=["util"]).find_spec("PIL") is None,
+    reason="contact sheet needs Pillow",
+)
 
 
 @pytest.fixture
 def video_root(tmp_path):
     clip = tmp_path / "clip.mp4"
     subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-f", "lavfi",
-         "-i", "testsrc=duration=3:size=320x240:rate=10", str(clip), "-y"],
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=320x240:rate=10",
+            str(clip),
+            "-y",
+        ],
         check=True,
     )
     return tmp_path
@@ -65,9 +80,12 @@ def test_frames_meta_carries_index_and_timestamp(video_root):
     assert all(i.meta["path"] == "clip.mp4" for i in imgs)
 
 
+@needs_pil
 def test_contact_sheet_meta(video_root):
     mcp = build_server(Root(video_root))
-    img = _images(_call(mcp, "video_contact_sheet", path="clip.mp4", count=4, cols=2))[0]
+    img = _images(_call(mcp, "video_contact_sheet", path="clip.mp4", count=4, cols=2))[
+        0
+    ]
     assert img.meta["kind"] == "contact_sheet"
     assert img.meta["cols"] == 2 and img.meta["path"] == "clip.mp4"
 
@@ -80,8 +98,23 @@ def test_frame_requires_timestamp_or_percent(video_root):
 
 def test_jpeg_is_smaller_than_png(video_root):
     mcp = build_server(Root(video_root))
-    png = _raw(_images(_call(mcp, "video_frame", path="clip.mp4", timestamp=1, format="png"))[0])
-    jpg = _raw(_images(_call(mcp, "video_frame", path="clip.mp4", timestamp=1, format="jpeg", quality=60))[0])
+    png = _raw(
+        _images(_call(mcp, "video_frame", path="clip.mp4", timestamp=1, format="png"))[
+            0
+        ]
+    )
+    jpg = _raw(
+        _images(
+            _call(
+                mcp,
+                "video_frame",
+                path="clip.mp4",
+                timestamp=1,
+                format="jpeg",
+                quality=60,
+            )
+        )[0]
+    )
     assert len(jpg) < len(png)
 
 
@@ -93,7 +126,11 @@ def test_explicit_timestamps(video_root):
 
 def test_output_file_writes_frames_under_root(video_root):
     mcp = build_server(Root(video_root))
-    payload = json.loads(_call(mcp, "video_frames", path="clip.mp4", timestamps=[1.0], output="file")[0].text)
+    payload = json.loads(
+        _call(mcp, "video_frames", path="clip.mp4", timestamps=[1.0], output="file")[
+            0
+        ].text
+    )
     rel = payload["frames"][0]["frame_path"]
     assert (video_root / rel).exists()
     assert rel.startswith(".filebridge_frames/")
@@ -102,18 +139,26 @@ def test_output_file_writes_frames_under_root(video_root):
 def test_frames_dir_override(video_root, tmp_path):
     custom = tmp_path / "elsewhere" / "frames"
     mcp = build_server(Root(video_root), frames_dir=custom)
-    payload = json.loads(_call(mcp, "video_frame", path="clip.mp4", timestamp=1, output="file")[0].text)
+    payload = json.loads(
+        _call(mcp, "video_frame", path="clip.mp4", timestamp=1, output="file")[0].text
+    )
     # frame_path is absolute (outside root) and the file exists in the custom dir
     assert custom.exists() and any(custom.iterdir())
 
 
+@needs_pil
 def test_contact_sheet_returns_single_image(video_root):
     mcp = build_server(Root(video_root))
     blocks = _call(mcp, "video_contact_sheet", path="clip.mp4", count=4, cols=2)
     assert len(_images(blocks)) == 1
 
 
+@needs_pil
 def test_contact_sheet_output_file(video_root):
     mcp = build_server(Root(video_root))
-    payload = json.loads(_call(mcp, "video_contact_sheet", path="clip.mp4", count=4, cols=2, output="file")[0].text)
+    payload = json.loads(
+        _call(
+            mcp, "video_contact_sheet", path="clip.mp4", count=4, cols=2, output="file"
+        )[0].text
+    )
     assert (video_root / payload["sheet_path"]).exists()

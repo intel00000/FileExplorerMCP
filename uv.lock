@@ -208,6 +208,8 @@ pdf = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pillow" },
+    { name = "pymupdf" },
     { name = "pytest" },
 ]
 
@@ -222,7 +224,11 @@ requires-dist = [
 provides-extras = ["image", "pdf", "all"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "pillow", specifier = ">=12.2.0" },
+    { name = "pymupdf", specifier = ">=1.27.2.3" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
 
 [[package]]
 name = "h11"

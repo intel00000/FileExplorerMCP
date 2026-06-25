@@ -46,7 +46,11 @@ packages = ["filebridge_mcp"]
 testpaths = ["tests"]
 addopts = "-q"
 
+# Dev/test dependencies (not installed by default, but can be installed with `uv sync --group 
+# dev` or `pip install .[dev]`).
 [dependency-groups]
 dev = [
+    "pillow>=12.2.0",
+    "pymupdf>=1.27.2.3",
     "pytest>=9.1.1",
 ]

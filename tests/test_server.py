@@ -13,8 +13,8 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from filebridge_mcp.sandbox import Root          # noqa: E402
-from filebridge_mcp.server import build_server    # noqa: E402
+from filebridge_mcp.sandbox import Root  # noqa: E402
+from filebridge_mcp.server import build_server  # noqa: E402
 
 WRITE_TOOLS = {"write_file", "make_dir"}
 DELETE_TOOLS = {"move", "delete"}
@@ -50,12 +50,17 @@ def test_allow_delete_only(tmp_path):
 
 
 def test_allow_both_registers_full_catalog(tmp_path):
-    names = _tool_names(build_server(Root(tmp_path), allow_write=True, allow_delete=True))
+    names = _tool_names(
+        build_server(Root(tmp_path), allow_write=True, allow_delete=True)
+    )
     assert MUTATING <= names
     assert len(names) == 14  # 10 read-only + 4 mutating
 
 
 def test_corrupt_image_returns_error_not_crash(tmp_path):
+    # Detecting corruption requires Pillow to attempt a decode; without it the
+    # server can only pass the (corrupt) bytes through, so there is no error to assert.
+    pytest.importorskip("PIL")
     # Valid PNG magic bytes but no real image data — Pillow cannot decode it.
     bad = tmp_path / "broken.png"
     bad.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
@@ -90,7 +95,11 @@ def test_read_pdf_render_page_stamps_meta(tmp_path):
     doc.save(str(tmp_path / "doc.pdf"))
     doc.close()
     mcp = build_server(Root(tmp_path))
-    blocks = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": "doc.pdf", "render_page": True})))
+    blocks = _blocks(
+        asyncio.run(
+            mcp.call_tool("read_file", {"path": "doc.pdf", "render_page": True})
+        )
+    )
     imgs = [b for b in blocks if b.type == "image"]
     assert len(imgs) == 1
     assert imgs[0].meta == {"path": "doc.pdf", "kind": "pdf_page", "page": 1}
