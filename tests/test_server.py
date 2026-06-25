@@ -187,28 +187,17 @@ def test_static_token_verifier_accepts_and_rejects():
     assert asyncio.run(v.verify_token("")) is None
 
 
-EPHEMERAL_TOOLS = {
-    "list_dir",
-    "glob",
-    "grep",
-    "read_file",
-    "video_frame",
-    "video_frames",
-    "video_contact_sheet",
-}
-
-
 def _props(tool):
     return (tool.inputSchema or {}).get("properties", {})
 
 
-def test_ephemeral_param_only_on_bloated_tools(tmp_path):
-    tools = {t.name: t for t in asyncio.run(build_server(Root(tmp_path)).list_tools())}
-    for name in EPHEMERAL_TOOLS:
-        assert "ephemeral" in _props(tools[name]), f"{name} should expose ephemeral"
-    # Small/bounded tools must NOT carry the field (no needless schema bloat).
-    for name in ("stat", "video_info", "read_bytes"):
-        assert "ephemeral" not in _props(tools[name]), f"{name} must not have ephemeral"
+def test_every_tool_is_ephemeral_capable(tmp_path):
+    # The global wrap (build_server) makes EVERY registered tool accept the shared
+    # `ephemeral` field - including the mutating ones - with no per-tool decoration.
+    mcp = build_server(Root(tmp_path), allow_write=True, allow_delete=True)
+    tools = asyncio.run(mcp.list_tools())
+    missing = [t.name for t in tools if "ephemeral" not in _props(t)]
+    assert missing == [], f"tools missing ephemeral: {missing}"
 
 
 def test_ephemeral_false_is_unchanged(tmp_path):

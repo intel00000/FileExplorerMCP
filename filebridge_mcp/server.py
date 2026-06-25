@@ -15,6 +15,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .auth import StaticTokenVerifier, auth_settings
+from .ephemeral import ephemeral_capable
 from .sandbox import Root
 from .tools import register_all
 
@@ -24,10 +25,10 @@ INSTRUCTIONS = (
     "(use offset/limit to page), images and PDF-page renders return as images "
     "the model can see, video/audio return metadata only — use video_frame / "
     "video_frames to actually see footage. All paths are relative to the root. "
-    "Large or image-heavy tools (list_dir, glob, grep, read_file, video_frame, "
-    "video_frames, video_contact_sheet) accept ephemeral=true: set it when you "
-    "only need the output once, and the host keeps it just for your next reply "
-    "then collapses it to a placeholder to save context (re-call to view again)."
+    "Every tool accepts ephemeral=true: set it for a call whose output you only "
+    "need to read once (a directory listing, a search dump, a frame), and the "
+    "host keeps that result just for your next reply then collapses it to a "
+    "placeholder to save context (re-call the tool to view it again)."
 )
 
 
@@ -67,6 +68,17 @@ def build_server(
         streamable_http_path=http_path,
         **auth_kwargs,
     )
+    # Make every tool ephemeral-capable in one place: wrap mcp.tool so each
+    # @mcp.tool(...) also applies @ephemeral_capable, adding the shared `ephemeral`
+    # opt-in field and its result tagging. Tools are written normally; the model is
+    # told about the flag once, at the server-instruction level (INSTRUCTIONS).
+    _register_tool = mcp.tool
+
+    def _ephemeral_tool(*args, **kwargs):
+        decorator = _register_tool(*args, **kwargs)
+        return lambda fn: decorator(ephemeral_capable(fn))
+
+    mcp.tool = _ephemeral_tool
     register_all(
         mcp,
         root,

@@ -10,14 +10,12 @@ from pydantic import Field
 from .. import deps
 from ..config import RO
 from ..detect import detect_kind
-from ..ephemeral import ephemeral_capable
 from ..media.video import duration, ffprobe
 from ..sandbox import Root
 
 
 def register(mcp, root: Root) -> None:
     @mcp.tool(name="list_dir", annotations={"title": "List directory", **RO})
-    @ephemeral_capable
     def list_dir(
         path: Annotated[
             str, Field(description="Folder relative to root, e.g. '.' or 'movies/2024'")
@@ -34,9 +32,6 @@ def register(mcp, root: Root) -> None:
 
         Returns JSON: {"path", "entries":[{"path","type","size","mtime"}], "truncated"}.
         type is "dir" or a detected file kind (text/image/pdf/video/audio/...).
-
-        A directory listing is often large; pass ephemeral=true to keep it in
-        context only until your next reply, then let the host drop it.
         """
         base = root.resolve(path)
         if not base.is_dir():

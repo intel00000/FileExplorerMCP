@@ -21,13 +21,11 @@ from pydantic import Field
 
 from ..config import GREP_MAX_FILE, RO
 from ..detect import detect_kind
-from ..ephemeral import ephemeral_capable
 from ..sandbox import Root
 
 
 def register(mcp, root: Root) -> None:
     @mcp.tool(name="glob", annotations={"title": "Glob for paths", **RO})
-    @ephemeral_capable
     def glob(
         pattern: Annotated[
             str,
@@ -43,9 +41,6 @@ def register(mcp, root: Root) -> None:
 
         Returns JSON: {"pattern","count","truncated","paths":[...]}.
         Paths reached via a symlink that escapes the root are skipped.
-
-        A wide glob can return many paths; pass ephemeral=true to keep the result
-        in context only until your next reply, then let the host drop it.
         """
         paths, truncated = [], False
         for m in root.base.glob(pattern):
@@ -66,7 +61,6 @@ def register(mcp, root: Root) -> None:
         )
 
     @mcp.tool(name="grep", annotations={"title": "Grep file contents", **RO})
-    @ephemeral_capable
     def grep(
         pattern: Annotated[str, Field(description="Python regex to search for")],
         path_glob: Annotated[
@@ -83,9 +77,6 @@ def register(mcp, root: Root) -> None:
 
         Returns JSON: {"pattern","count","truncated","matches":[{"path","line","text"}]}.
         Non-text files (including PDFs) and files over ~5 MB are skipped.
-
-        A broad search can dump many matching lines; pass ephemeral=true to keep
-        the result in context only until your next reply, then let the host drop it.
         """
         try:
             rx = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
