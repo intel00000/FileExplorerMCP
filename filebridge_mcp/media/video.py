@@ -9,6 +9,7 @@ keyframe seek (`-ss` before `-i`) and emits PNG to stdout — no temp files
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -30,11 +31,20 @@ def ffprobe(p: Path, timeout: Optional[float] = None) -> dict:
     `timeout` (seconds, None = unbounded) caps the probe so a pathological file
     cannot hang the server.
     """
-    cmd = ["ffprobe", "-loglevel", "error", "-show_format", "-show_streams", "-of", "json", str(p)]
+    cmd = [
+        "ffprobe",
+        "-loglevel",
+        "error",
+        "-show_format",
+        "-show_streams",
+        "-of",
+        "json",
+        str(p),
+    ]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(_timeout_msg("ffprobe", timeout))
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(_timeout_msg("ffprobe", timeout)) from e
     if res.returncode != 0:
         raise RuntimeError(res.stderr.strip()[:300] or "ffprobe failed")
     return json.loads(res.stdout)
@@ -86,9 +96,14 @@ def _jpeg_qscale(quality: int) -> int:
     return max(2, min(31, round(2 + (100 - q) * (31 - 2) / 99)))
 
 
-def extract_frame(p: Path, t: float, max_dim: Optional[int],
-                  fmt: str = "png", quality: int = 85,
-                  timeout: Optional[float] = None) -> bytes:
+def extract_frame(
+    p: Path,
+    t: float,
+    max_dim: Optional[int],
+    fmt: str = "png",
+    quality: int = 85,
+    timeout: Optional[float] = None,
+) -> bytes:
     """Grab one frame at time `t` (seconds). Fast keyframe seek (-ss before -i).
 
     `fmt` is 'png' (lossless) or 'jpeg' (far smaller; `quality` 1..100 applies).
@@ -96,7 +111,17 @@ def extract_frame(p: Path, t: float, max_dim: Optional[int],
     cannot hang the server.
     """
     fmt = norm_format(fmt)
-    cmd = ["ffmpeg", "-loglevel", "error", "-ss", f"{max(t, 0):.3f}", "-i", str(p), "-frames:v", "1"]
+    cmd = [
+        "ffmpeg",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{max(t, 0):.3f}",
+        "-i",
+        str(p),
+        "-frames:v",
+        "1",
+    ]
     if max_dim:
         cmd += ["-vf", f"scale='min({int(max_dim)},iw)':-2"]
     if fmt == "jpeg":
@@ -106,8 +131,81 @@ def extract_frame(p: Path, t: float, max_dim: Optional[int],
     cmd += ["-f", "image2", "-"]
     try:
         res = subprocess.run(cmd, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(_timeout_msg("ffmpeg", timeout))
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(_timeout_msg("ffmpeg", timeout)) from e
     if res.returncode != 0 or not res.stdout:
-        raise RuntimeError(res.stderr.decode(errors="replace").strip()[:300] or "ffmpeg produced no frame")
+        raise RuntimeError(
+            res.stderr.decode(errors="replace").strip()[:300]
+            or "ffmpeg produced no frame"
+        )
     return res.stdout
+
+
+_PTS_TIME = re.compile(r"pts_time:([0-9]+\.?[0-9]*)")
+
+
+def size_scaled_timeout(p: Path, seconds_per_gb: float = 30.0) -> float:
+    """A decode-time budget scaled by file size, for heavy full-decode ops like scene
+    detection: ``seconds_per_gb`` per gigabyte, never less than one GB's worth so a
+    small file still gets a usable floor (≈30s for 1 GB, ≈60s for 2 GB).
+
+    Scaling by bytes is a rough proxy — real decode cost tracks frame count
+    (duration x fps) more than size — so the floor mainly guards small-but-long clips.
+    """
+    try:
+        gb = p.stat().st_size / 1_000_000_000
+    except OSError:
+        gb = 0.0
+    return seconds_per_gb * max(1.0, gb)
+
+
+def detect_scenes(
+    p: Path,
+    threshold: float = 0.4,
+    timeout: Optional[float] = None,
+    scale_width: int = 320,
+) -> "list[float]":
+    """Return shot/scene-cut start times (seconds), always including 0.0.
+
+    Decodes the whole file applying ``select='gt(scene,threshold)'`` and prints the
+    matching frames' timestamps via the ``metadata`` filter; we parse ``pts_time`` from
+    the log. Frames are downscaled first (purely to speed up detection — the scene
+    score doesn't need full resolution). ``threshold`` is 0..1 (lower = more cuts).
+
+    Note: this is a full-decode pass, so it is the heaviest video op; it is bounded by
+    `timeout` like the others.
+    """
+    thr = max(0.0, min(1.0, float(threshold)))
+    # Escape the comma inside gt() so it isn't read as a filter separator.
+    vf = f"scale={int(scale_width)}:-2,select='gt(scene\\,{thr})',metadata=print"
+    cmd = [
+        "ffmpeg",
+        "-loglevel",
+        "info",
+        "-i",
+        str(p),
+        "-an",
+        "-sn",
+        "-filter:v",
+        vf,
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"Scene detection timed out after {timeout:g}s — the video is long/large "
+            f"for its size-scaled budget. Try a shorter clip, or an operator can lift "
+            f"the limit with --ffmpeg-timeout 0."
+        ) from e
+    if res.returncode != 0:
+        raise RuntimeError(res.stderr.strip()[:300] or "ffmpeg scene detection failed")
+    # metadata=print logs "... pts_time:<seconds>" for each selected (cut) frame.
+    times = {0.0}
+    for m in _PTS_TIME.finditer(res.stderr):
+        t = round(float(m.group(1)), 3)
+        if t > 0:
+            times.add(t)
+    return sorted(times)

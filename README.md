@@ -98,7 +98,7 @@ takes precedence.
 | Read    | `read_file`, `read_bytes` | type-dispatched projection; arbitrary byte hexdump |
 | Search  | `glob`, `grep` | both re-checked for sandbox containment; grep is text-only |
 | Mutate  | `write_file`, `make_dir`, `move`, `delete` | **opt-in only** — `--allow-write` / `--allow-delete`; `move`/`delete` carry `destructiveHint` |
-| Video   | `video_info`, `video_frame`, `video_frames`, `video_contact_sheet` | probe; single-frame seek (by seconds or `percent`); frame set (even slice or explicit `timestamps`); N frames tiled into one labeled image |
+| Video   | `video_info`, `video_scenes`, `video_frame`, `video_frames`, `video_contact_sheet` | probe; scene-cut timestamps; single-frame seek (seconds or `percent`); frame **sweep** (`step` + `next_offset` cursor) or explicit `timestamps`; N frames tiled into one labeled image |
 
 ### File types & return formats
 
@@ -115,7 +115,7 @@ can read and react.
 | **pdf** | `%PDF` magic | default → **JSON** `{path, kind:"pdf", total_pages, offset, next_offset, content}` (page-range *text*). With `render_page=true` → **Image** of the page at `offset`, `_meta={path, kind:"pdf_page", page}`. No PyMuPDF ⇒ JSON `{error}` |
 | **office** | `.docx/.pptx/.xlsx` + `PK\x03\x04` zip magic | **JSON** note `{path, kind:"office", mime, note}` — not parsed (extension point) |
 | **archive** | `.zip/.tar/…` or `PK\x03\x04` zip magic | **JSON** note `{path, kind:"archive", note}` — entries not listed (extension point) |
-| **video** | video extension (`.mp4/.mkv/.mov/…`) | **JSON** note `{path, kind:"video", mime, note}` → use `video_frame` / `video_frames` / `video_contact_sheet` to see footage |
+| **video** | video extension (`.mp4/.mkv/.mov/…`) | **JSON** note `{path, kind:"video", mime, note}` → use `video_scenes` / `video_frame` / `video_frames` / `video_contact_sheet` to map and see footage |
 | **audio** | audio extension (`.mp3/.wav/.flac/…`) | **JSON** note `{path, kind:"audio", mime, note}` — transcription is an extension point |
 | **binary** | fallthrough | **JSON** `{path, kind:"binary", mime, size, shown_bytes, hexdump}` — hexdump of the first 256 bytes, never the raw blob |
 
@@ -132,7 +132,7 @@ folder.
 |------|------------------------------------------|----------------------|
 | `read_file` (image / `render_page`) | one **Image** + `_meta` | — (image already on disk) |
 | `video_frame` | one **Image**, `_meta={path, timestamp_sec}` | JSON `{path, timestamp_sec, frame_path, format}` |
-| `video_frames` | **list**: summary JSON + N **Images**, each `_meta={path, timestamp_sec, frame_index}`; a failed frame ⇒ error JSON with the same `frame_index` | JSON `{path, format, frames:[{timestamp_sec, frame_path}]}` |
+| `video_frames` | **list**: summary JSON `{…, next_offset}` + N **Images**, each `_meta={path, timestamp_sec, frame_index}`; a failed frame ⇒ error JSON with the same `frame_index` | JSON `{path, format, frames:[{timestamp_sec, frame_path}], next_offset}` |
 | `video_contact_sheet` | one tiled **Image**, `_meta={path, kind:"contact_sheet", frame_count, cols}` | JSON `{path, frame_count, cols, sheet_path, format}` |
 
 **Text-only tools** (JSON, straight into context) — never reach the vision channel:
@@ -145,6 +145,7 @@ folder.
 | `glob` | `{pattern, count, truncated, paths}` |
 | `grep` | `{pattern, count, truncated, matches:[{path, line, text}]}` (text files only) |
 | `video_info` | `{path, duration_sec, width, height, fps, codec, has_audio}` |
+| `video_scenes` | `{path, duration_sec, scene_count, truncated, scenes:[{index, start_sec}]}` — scene-cut timestamps (`0.0` always first) |
 | `write_file` | `{path, mode, bytes_written}` |
 | `make_dir` | `{path, created}` |
 | `move` | `{src, dst}` |
@@ -203,10 +204,11 @@ without it those images fall back to native format.
 
 The frame tools share these knobs:
 
-- **Seek** — `video_frame` takes `timestamp` (seconds) **or** `percent` (e.g. `percent=60` → the 60% mark). `video_frames` takes either an even `start`/`end`/`count` slice **or** an explicit `timestamps=[…]` list.
+- **Seek & sweep** — `video_frame` takes `timestamp` (seconds) **or** `percent` (e.g. `percent=60` → the 60% mark). `video_frames` either **sweeps** (`start`/`step`/`count`, returning a `next_offset` cursor to page through the whole clip) **or** takes an explicit `timestamps=[…]` list.
 - **Encoding** — `format='png'` (lossless) or `format='jpeg'` with `quality` 1–100. JPEG frames are a fraction of the base64 size.
 - **`output='inline' | 'file'`** — `inline` returns image content (default). **`file`** writes the frame(s) to the frames dir (`<root>/.filebridge_frames/`, override with `--frames-dir`) and returns *paths* instead of base64. This is the **mtmd fallback** (see below): a host that can't route inline images into the vision encoder can attach the saved file as a real image. It is the only path the read-only server writes to.
 - **`video_contact_sheet`** — tiles `count` evenly-spaced, timestamp-labeled frames into a single image (`cols` wide). One composite costs far fewer vision tokens than N separate frames; ideal for a first-pass overview. Needs Pillow.
+- **`video_scenes`** — ffmpeg scene detection returns shot-cut timestamps so the model samples where the picture actually changes; feed the `start_sec` values into `video_frames(timestamps=…)` or `video_contact_sheet`. Dependency-free.
 
 ### Image identity (`_meta`)
 

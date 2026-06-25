@@ -51,3 +51,27 @@ def test_no_timeout_passes_through(monkeypatch):
     out = video.extract_frame(Path("clip.mp4"), 1.0, None, "png", 85, timeout=None)
     assert out.startswith(b"\x89PNG")
     assert seen["timeout"] is None
+
+
+def test_size_scaled_timeout(tmp_path):
+    """Scene-detection budget scales ~30s/GB with a one-GB-worth floor for small files."""
+    import os
+
+    from filebridge_mcp.media.video import size_scaled_timeout
+
+    tiny = tmp_path / "tiny.bin"
+    tiny.write_bytes(b"x")
+    assert size_scaled_timeout(tiny) == 30.0  # floored at one GB's worth
+
+    one_gb = tmp_path / "one.bin"
+    one_gb.write_bytes(b"")
+    os.truncate(one_gb, 1_000_000_000)  # sparse 1 GB
+    assert size_scaled_timeout(one_gb) == 30.0
+
+    two_gb = tmp_path / "two.bin"
+    two_gb.write_bytes(b"")
+    os.truncate(two_gb, 2_000_000_000)  # sparse 2 GB
+    assert size_scaled_timeout(two_gb) == 60.0
+
+    # Missing file falls back to the floor rather than raising.
+    assert size_scaled_timeout(tmp_path / "nope.bin") == 30.0

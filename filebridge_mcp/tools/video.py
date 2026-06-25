@@ -30,7 +30,15 @@ from .. import deps
 from ..config import DEFAULT_FRAMES, MAX_FRAMES, PDF_RENDER_DIM, RO, resolve_dim
 from ..media import compose
 from ..media.images import image_content
-from ..media.video import duration, extract_frame, ffprobe, norm_format, probe
+from ..media.video import (
+    detect_scenes,
+    duration,
+    extract_frame,
+    ffprobe,
+    norm_format,
+    probe,
+    size_scaled_timeout,
+)
 from ..sandbox import Root
 
 _FMT = Field(
@@ -56,9 +64,7 @@ _MAXDIM = Field(
 )
 
 # A fast seek (`-ss` before `-i`) past the final frame's timestamp returns no frame,
-# so cap any sample about 1.5 frames before the end. The margin is frame-rate-aware
-# (the last frame sits at ~dur - 1/fps); when fps is unknown a generous fallback keeps
-# the seek safely inside. Skipped when the duration is unknown (<= 0).
+# so bound any sample by a margin about 1.5 frames before the end.
 _SEEK_FALLBACK_MARGIN = 0.5
 
 
@@ -165,6 +171,60 @@ def register(
                 out["has_audio"] = True
         return json.dumps(out, indent=2)
 
+    @mcp.tool(name="video_scenes", annotations={"title": "Detect scene cuts", **RO})
+    def video_scenes(
+        path: Annotated[str, Field(description="Video file relative to root")],
+        threshold: Annotated[
+            float,
+            Field(
+                description="Scene-change sensitivity 0..1; lower finds more cuts "
+                "(~0.3-0.4 typical).",
+                ge=0.0,
+                le=1.0,
+            ),
+        ] = 0.4,
+        max_scenes: Annotated[
+            int, Field(description="Cap on cuts returned", ge=1, le=1000)
+        ] = 200,
+    ) -> str:
+        """Find shot/scene-cut timestamps so you can sample where the picture actually
+        changes instead of blindly.
+
+        Returns JSON {"path","duration_sec","scene_count","truncated",
+        "scenes":[{"index","start_sec"}]}, always including 0.0 as the first cut. Feed
+        the start_sec values into video_frames(timestamps=...), or tile them with
+        video_contact_sheet, for one representative frame per shot. This is a full
+        decode pass (the heaviest video op); its time budget scales with file size
+        (~30s/GB) and frames are downscaled internally to speed it up.
+        """
+        err = deps.require_ffmpeg()
+        if err:
+            return json.dumps({"error": err})
+        p = root.resolve(path)
+        if not p.is_file():
+            return json.dumps({"error": f"Not a file: {path}"})
+        # Scene detection is a full-decode pass; budget it by file size (~30s/GB)
+        # instead of the flat per-call ffmpeg timeout. A disabled timeout (None)
+        # stays unbounded.
+        scene_timeout = None if ffmpeg_timeout is None else size_scaled_timeout(p)
+        try:
+            cuts = detect_scenes(p, threshold, scene_timeout)
+            dur, _ = probe(p, ffmpeg_timeout)
+        except RuntimeError as e:
+            return json.dumps({"error": root.scrub(str(e))})
+        truncated = len(cuts) > max_scenes
+        scenes = [{"index": i, "start_sec": t} for i, t in enumerate(cuts[:max_scenes])]
+        return json.dumps(
+            {
+                "path": root.rel(p),
+                "duration_sec": round(dur, 3),
+                "scene_count": len(scenes),
+                "truncated": truncated,
+                "scenes": scenes,
+            },
+            indent=2,
+        )
+
     @mcp.tool(
         name="video_frame", annotations={"title": "Extract one video frame", **RO}
     )
@@ -231,40 +291,47 @@ def register(
         )
 
     @mcp.tool(
-        name="video_frames", annotations={"title": "Sample frames across a slice", **RO}
+        name="video_frames", annotations={"title": "Sweep or sample video frames", **RO}
     )
     def video_frames(
         path: Annotated[str, Field(description="Video file relative to root")],
         start: Annotated[
-            float, Field(description="Slice start in seconds", ge=0)
+            float, Field(description="Sweep start in seconds (sweep mode)", ge=0)
         ] = 0.0,
-        end: Annotated[
-            Optional[float],
-            Field(description="Slice end in seconds; omit for end of video"),
-        ] = None,
+        step: Annotated[
+            float, Field(description="Seconds between frames in sweep mode", gt=0)
+        ] = 1.0,
         count: Annotated[
             int,
             Field(
-                description="Frames evenly sampled across the slice",
-                ge=1,
-                le=MAX_FRAMES,
+                description="How many frames to return this call", ge=1, le=MAX_FRAMES
             ),
         ] = DEFAULT_FRAMES,
         timestamps: Annotated[
             Optional[list[float]],
-            Field(description="Explicit seconds to grab (overrides start/end/count)."),
+            Field(
+                description="Explicit seconds to grab. When set, overrides the sweep "
+                "(start/step are ignored)."
+            ),
         ] = None,
         max_dimension: Annotated[Optional[int], _MAXDIM] = None,
         format: Annotated[Optional[str], _FMT] = None,
         quality: Annotated[Optional[int], _QUALITY] = None,
         output: Annotated[str, _OUTPUT] = "inline",
     ):
-        """Sample frames as a set: evenly across [start, end], or at explicit `timestamps`.
+        """Get several frames at once, in one of two modes:
 
-        Ordered output. With output='inline', the first list element is a JSON summary
-        of the timestamps and the rest are images. With output='file', a single JSON
-        object lists each frame's saved path. Keep the frame count modest — every inline
-        frame is encoded by the vision model in full.
+          sweep (default) -- walk the video from `start`, one frame every `step`
+            seconds, `count` frames per call. The result carries a `next_offset` (the
+            `start` for the next page, or null at the end), so you can march through a
+            whole video a window at a time. Pair with ephemeral=true: note what you see,
+            then page on with start=next_offset.
+          explicit -- pass `timestamps=[...]` to grab those exact moments (e.g. the
+            scene cuts from video_scenes, or points picked off a contact sheet).
+
+        Ordered output. output='inline' returns a JSON summary block first, then the
+        images; output='file' returns one JSON object listing each saved frame path.
+        Both include `next_offset`.
         """
         err = deps.require_ffmpeg()
         if err:
@@ -282,20 +349,23 @@ def register(
             msg = json.dumps({"error": root.scrub(str(e))})
             return [msg] if output == "inline" else msg
 
+        next_offset = None
         if timestamps:
             stamps = [_clamp_seek(float(t), dur, fps) for t in timestamps[:MAX_FRAMES]]
         else:
-            hi = dur if end is None else min(end, dur)
-            if hi <= start:
+            if dur and start >= dur:
                 msg = json.dumps({
-                    "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
+                    "error": f"start={start} is at/after duration={round(dur, 3)}"
                 })
                 return [msg] if output == "inline" else msg
-            if count == 1:
-                stamps = [_clamp_seek(start, dur, fps)]
-            else:
-                step = (hi - start) / (count - 1)
-                stamps = [_clamp_seek(start + i * step, dur, fps) for i in range(count)]
+            stamps = []
+            for i in range(count):
+                t = start + i * step
+                if dur and t >= dur:
+                    break  # walked past the end of the video
+                stamps.append(_clamp_seek(t, dur, fps))
+            nxt = round(start + count * step, 3)
+            next_offset = nxt if (dur and nxt < dur) else None
 
         if output == "file":
             _sweep_frames()
@@ -311,10 +381,22 @@ def register(
                 except Exception as e:
                     frames.append({"timestamp_sec": t, "error": root.scrub(str(e))})
             return json.dumps(
-                {"path": root.rel(p), "format": fmt, "frames": frames}, indent=2
+                {
+                    "path": root.rel(p),
+                    "format": fmt,
+                    "frames": frames,
+                    "next_offset": next_offset,
+                },
+                indent=2,
             )
 
-        results: list = [json.dumps({"path": root.rel(p), "timestamps_sec": stamps})]
+        results: list = [
+            json.dumps({
+                "path": root.rel(p),
+                "timestamps_sec": stamps,
+                "next_offset": next_offset,
+            })
+        ]
         for i, t in enumerate(stamps):
             try:
                 data = extract_frame(p, t, dim, fmt, q, ffmpeg_timeout)

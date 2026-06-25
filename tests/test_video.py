@@ -180,12 +180,62 @@ def test_contact_sheet_output_file(video_root):
     assert (video_root / payload["sheet_path"]).exists()
 
 
-def test_frames_over_whole_clip_extracts_all(video_root):
-    """Evenly sampling the whole clip (end omitted) put the last sample at exactly
-    duration, which fails to extract. All requested frames must now come back (BUG 2)."""
+def test_frames_sweep_paginates_with_cursor(video_root):
+    """Default sweep: walk the clip by `step`, with a next_offset cursor for paging."""
     mcp = build_server(Root(video_root))
-    blocks = _call(mcp, "video_frames", path="clip.mp4", count=5)
-    assert len(_images(blocks)) == 5
+    blocks = _call(mcp, "video_frames", path="clip.mp4", start=0.0, step=0.5, count=4)
+    assert len(_images(blocks)) == 4
+    summary = json.loads(blocks[0].text)
+    assert [round(t, 1) for t in summary["timestamps_sec"]] == [0.0, 0.5, 1.0, 1.5]
+    assert summary["next_offset"] == 2.0
+
+
+def test_frames_sweep_stops_at_end_with_null_cursor(video_root):
+    """Sweeping past the 3s end yields a partial page, a null cursor, and no errors."""
+    mcp = build_server(Root(video_root))
+    blocks = _call(mcp, "video_frames", path="clip.mp4", start=2.0, step=1.0, count=5)
+    assert len(_images(blocks)) >= 1
+    summary = json.loads(blocks[0].text)
+    assert summary["next_offset"] is None
+    errs = [
+        b
+        for b in blocks
+        if type(b).__name__ == "TextContent" and "frame at" in getattr(b, "text", "")
+    ]
+    assert errs == []
+
+
+def test_video_scenes_detects_hard_cut(tmp_path):
+    """video_scenes finds a hard cut and always includes 0.0 as the first scene."""
+    clip = tmp_path / "cut.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=2:size=320x240:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "mandelbrot=size=320x240:rate=10",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0",
+            "-t",
+            "4",
+            str(clip),
+            "-y",
+        ],
+        check=True,
+    )
+    mcp = build_server(Root(tmp_path))
+    payload = json.loads(_call(mcp, "video_scenes", path="cut.mp4")[0].text)
+    starts = [s["start_sec"] for s in payload["scenes"]]
+    assert starts[0] == 0.0
+    assert any(abs(t - 2.0) < 0.3 for t in starts)
+    assert payload["scene_count"] == len(payload["scenes"])
 
 
 def test_percent_100_returns_image(video_root):
