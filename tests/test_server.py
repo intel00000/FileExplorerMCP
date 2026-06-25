@@ -185,3 +185,69 @@ def test_static_token_verifier_accepts_and_rejects():
     assert asyncio.run(v.verify_token("good-secret")) is not None
     assert asyncio.run(v.verify_token("wrong")) is None
     assert asyncio.run(v.verify_token("")) is None
+
+
+EPHEMERAL_TOOLS = {
+    "list_dir",
+    "glob",
+    "grep",
+    "read_file",
+    "video_frame",
+    "video_frames",
+    "video_contact_sheet",
+}
+
+
+def _props(tool):
+    return (tool.inputSchema or {}).get("properties", {})
+
+
+def test_ephemeral_param_only_on_bloated_tools(tmp_path):
+    tools = {t.name: t for t in asyncio.run(build_server(Root(tmp_path)).list_tools())}
+    for name in EPHEMERAL_TOOLS:
+        assert "ephemeral" in _props(tools[name]), f"{name} should expose ephemeral"
+    # Small/bounded tools must NOT carry the field (no needless schema bloat).
+    for name in ("stat", "video_info", "read_bytes"):
+        assert "ephemeral" not in _props(tools[name]), f"{name} must not have ephemeral"
+
+
+def test_ephemeral_false_is_unchanged(tmp_path):
+    from mcp.types import CallToolResult
+
+    (tmp_path / "a.txt").write_text("hello\n")
+    mcp = build_server(Root(tmp_path))
+    res = asyncio.run(mcp.call_tool("list_dir", {"path": "."}))
+    # No opt-in -> normal content path, no result-level _meta wrapper.
+    assert not isinstance(res, CallToolResult)
+
+
+def test_ephemeral_true_stamps_result_meta(tmp_path):
+    from mcp.types import CallToolResult
+
+    (tmp_path / "a.txt").write_text("hello\n")
+    mcp = build_server(Root(tmp_path))
+    res = asyncio.run(mcp.call_tool("list_dir", {"path": ".", "ephemeral": True}))
+    assert isinstance(res, CallToolResult)
+    assert res.meta == {"ephemeral": True}
+    # Serializes under the wire key "_meta" the host reads.
+    wire = res.model_dump(by_alias=True, mode="json", exclude_none=True)
+    assert wire["_meta"]["ephemeral"] is True
+    # The listing itself still rides along as content.
+    assert any(getattr(b, "type", None) == "text" for b in res.content)
+
+
+def test_ephemeral_image_keeps_both_meta_layers(tmp_path):
+    from mcp.types import CallToolResult
+
+    PILImage = pytest.importorskip("PIL.Image")
+    PILImage.new("RGB", (16, 16), (1, 2, 3)).save(tmp_path / "pic.png", format="PNG")
+    mcp = build_server(Root(tmp_path))
+    res = asyncio.run(
+        mcp.call_tool("read_file", {"path": "pic.png", "ephemeral": True})
+    )
+    assert isinstance(res, CallToolResult)
+    # Result-level (ephemeral) and block-level (identity) _meta coexist.
+    assert res.meta == {"ephemeral": True}
+    imgs = [b for b in res.content if b.type == "image"]
+    assert len(imgs) == 1
+    assert imgs[0].meta == {"path": "pic.png", "kind": "image"}

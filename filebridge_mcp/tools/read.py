@@ -23,12 +23,14 @@ from ..config import (
     resolve_dim,
 )
 from ..detect import detect_kind, hexdump
+from ..ephemeral import ephemeral_capable
 from ..media.images import downscaled_image, image_content
 from ..sandbox import Root
 
 
 def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
     @mcp.tool(name="read_file", annotations={"title": "Read file content", **RO})
+    @ephemeral_capable
     def read_file(
         path: Annotated[str, Field(description="File relative to root")],
         offset: Annotated[
@@ -77,6 +79,9 @@ def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
           binary  -> stat + a hexdump of the first bytes (never the raw blob).
 
         Returns either a JSON string or an Image.
+
+        For a large text read or an image, pass ephemeral=true to keep the output
+        in context only until your next reply, then let the host drop it.
         """
         p = root.resolve(path)
         if not p.is_file():

@@ -10,21 +10,33 @@ from pydantic import Field
 from .. import deps
 from ..config import RO
 from ..detect import detect_kind
+from ..ephemeral import ephemeral_capable
 from ..media.video import duration, ffprobe
 from ..sandbox import Root
 
 
 def register(mcp, root: Root) -> None:
     @mcp.tool(name="list_dir", annotations={"title": "List directory", **RO})
+    @ephemeral_capable
     def list_dir(
-        path: Annotated[str, Field(description="Folder relative to root, e.g. '.' or 'movies/2024'")] = ".",
-        depth: Annotated[int, Field(description="Recursion depth (1 = immediate children)", ge=1, le=5)] = 1,
-        max_entries: Annotated[int, Field(description="Cap on entries returned", ge=1, le=2000)] = 500,
+        path: Annotated[
+            str, Field(description="Folder relative to root, e.g. '.' or 'movies/2024'")
+        ] = ".",
+        depth: Annotated[
+            int,
+            Field(description="Recursion depth (1 = immediate children)", ge=1, le=5),
+        ] = 1,
+        max_entries: Annotated[
+            int, Field(description="Cap on entries returned", ge=1, le=2000)
+        ] = 500,
     ) -> str:
         """List a directory as a tree, for orientation before reading files.
 
         Returns JSON: {"path", "entries":[{"path","type","size","mtime"}], "truncated"}.
         type is "dir" or a detected file kind (text/image/pdf/video/audio/...).
+
+        A directory listing is often large; pass ephemeral=true to keep it in
+        context only until your next reply, then let the host drop it.
         """
         base = root.resolve(path)
         if not base.is_dir():
@@ -34,7 +46,9 @@ def register(mcp, root: Root) -> None:
         while stack:
             cur, d = stack.pop(0)
             try:
-                children = sorted(cur.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+                children = sorted(
+                    cur.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())
+                )
             except OSError:
                 continue
             for child in children:
@@ -47,20 +61,27 @@ def register(mcp, root: Root) -> None:
                     size, mtime = st.st_size, int(st.st_mtime)
                 except OSError:
                     size, mtime = 0, 0
-                entries.append({
-                    "path": root.rel(child),
-                    "type": "dir" if is_dir else detect_kind(child)[0],
-                    "size": None if is_dir else size,
-                    "mtime": mtime,
-                })
+                entries.append(
+                    {
+                        "path": root.rel(child),
+                        "type": "dir" if is_dir else detect_kind(child)[0],
+                        "size": None if is_dir else size,
+                        "mtime": mtime,
+                    }
+                )
                 if is_dir and d + 1 < depth:
                     stack.append((child, d + 1))
             if truncated:
                 break
-        return json.dumps({"path": root.rel(base), "entries": entries, "truncated": truncated}, indent=2)
+        return json.dumps(
+            {"path": root.rel(base), "entries": entries, "truncated": truncated},
+            indent=2,
+        )
 
     @mcp.tool(name="stat", annotations={"title": "Stat a path", **RO})
-    def stat(path: Annotated[str, Field(description="File or folder relative to root")]) -> str:
+    def stat(
+        path: Annotated[str, Field(description="File or folder relative to root")],
+    ) -> str:
         """Cheap metadata for one path — call this before read_file to size up a file.
 
         Returns JSON: {"path","exists","is_dir","kind","mime","size","mtime"}.
@@ -70,8 +91,13 @@ def register(mcp, root: Root) -> None:
         if not p.exists():
             return json.dumps({"path": path, "exists": False})
         st = p.stat()
-        out = {"path": root.rel(p), "exists": True, "is_dir": p.is_dir(),
-               "size": st.st_size, "mtime": int(st.st_mtime)}
+        out = {
+            "path": root.rel(p),
+            "exists": True,
+            "is_dir": p.is_dir(),
+            "size": st.st_size,
+            "mtime": int(st.st_mtime),
+        }
         if p.is_dir():
             out["kind"] = "dir"
             return json.dumps(out, indent=2)

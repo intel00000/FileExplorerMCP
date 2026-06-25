@@ -23,7 +23,11 @@ INSTRUCTIONS = (
     "before reading. read_file auto-detects type: text returns a line slice "
     "(use offset/limit to page), images and PDF-page renders return as images "
     "the model can see, video/audio return metadata only — use video_frame / "
-    "video_frames to actually see footage. All paths are relative to the root."
+    "video_frames to actually see footage. All paths are relative to the root. "
+    "Large or image-heavy tools (list_dir, glob, grep, read_file, video_frame, "
+    "video_frames, video_contact_sheet) accept ephemeral=true: set it when you "
+    "only need the output once, and the host keeps it just for your next reply "
+    "then collapses it to a placeholder to save context (re-call to view again)."
 )
 
 

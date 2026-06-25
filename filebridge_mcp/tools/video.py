@@ -27,6 +27,7 @@ from pydantic import Field
 
 from .. import deps
 from ..config import DEFAULT_FRAMES, MAX_FRAMES, PDF_RENDER_DIM, RO, resolve_dim
+from ..ephemeral import ephemeral_capable
 from ..media import compose
 from ..media.images import image_content
 from ..media.video import duration, extract_frame, ffprobe, norm_format
@@ -120,6 +121,7 @@ def register(
     @mcp.tool(
         name="video_frame", annotations={"title": "Extract one video frame", **RO}
     )
+    @ephemeral_capable
     def video_frame(
         path: Annotated[str, Field(description="Video file relative to root")],
         timestamp: Annotated[
@@ -143,6 +145,9 @@ def register(
         Use for agentic seeking — probe with video_info, then narrow toward the moment
         (e.g. binary-search a title card), or jump straight to `percent=60`. Returns an
         Image (output='inline') or JSON with a frame_path (output='file'), or a JSON error.
+
+        A frame is image-heavy in context; pass ephemeral=true to keep it only until
+        your next reply, then let the host drop it.
         """
         err = deps.require_ffmpeg()
         if err:
@@ -182,6 +187,7 @@ def register(
     @mcp.tool(
         name="video_frames", annotations={"title": "Sample frames across a slice", **RO}
     )
+    @ephemeral_capable
     def video_frames(
         path: Annotated[str, Field(description="Video file relative to root")],
         start: Annotated[
@@ -214,6 +220,9 @@ def register(
         of the timestamps and the rest are images. With output='file', a single JSON
         object lists each frame's saved path. Keep the frame count modest — every inline
         frame is encoded by the vision model in full.
+
+        Many inline frames are very context-heavy; pass ephemeral=true to keep them
+        only until your next reply, then let the host drop them.
         """
         err = deps.require_ffmpeg()
         if err:
@@ -294,6 +303,7 @@ def register(
         name="video_contact_sheet",
         annotations={"title": "Tile frames into one image", **RO},
     )
+    @ephemeral_capable
     def video_contact_sheet(
         path: Annotated[str, Field(description="Video file relative to root")],
         count: Annotated[
@@ -318,6 +328,9 @@ def register(
         A single composite costs far fewer vision tokens than `count` separate frames —
         ideal for a first-pass overview of a clip before zooming in with video_frame.
         Returns an Image (inline) or a saved sheet path (file). Needs Pillow.
+
+        The composite is still an image in context; pass ephemeral=true to keep it
+        only until your next reply, then let the host drop it.
         """
         err = deps.require_ffmpeg()
         if err:
