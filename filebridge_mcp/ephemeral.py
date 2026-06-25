@@ -22,14 +22,9 @@ from mcp.server.fastmcp import Image
 from mcp.types import CallToolResult, ImageContent, TextContent
 from pydantic import Field
 
-# The single field used to mark a result ephemeral, shared by every bloated tool.
+# The single field added to every tool.
 EPHEMERAL = Field(
-    description=(
-        "If true, mark this result one-time: the host keeps it in full only until "
-        "your next message, then collapses it to a short placeholder to reclaim "
-        "context. Set this when you only need to read the output once (a directory "
-        "listing, a search dump, a video frame); re-call the tool to view it again."
-    )
+    description="One-time result (see the ephemeral note in the server instructions)."
 )
 Ephemeral = Annotated[bool, EPHEMERAL]
 

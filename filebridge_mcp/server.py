@@ -25,10 +25,12 @@ INSTRUCTIONS = (
     "(use offset/limit to page), images and PDF-page renders return as images "
     "the model can see, video/audio return metadata only — use video_frame / "
     "video_frames to actually see footage. All paths are relative to the root. "
-    "Every tool accepts ephemeral=true: set it for a call whose output you only "
-    "need to read once (a directory listing, a search dump, a frame), and the "
-    "host keeps that result just for your next reply then collapses it to a "
-    "placeholder to save context (re-call the tool to view it again)."
+    "Every tool accepts an ephemeral flag. Set ephemeral=true for a call whose "
+    "output you only need to read once (a directory listing, a search dump, a "
+    "frame): the host keeps that result in full only for your very next reply, "
+    "then replaces it with a short placeholder to save context. It is NOT sent "
+    "again, so note anything you need from it in your reply before moving on, and "
+    "do not call the tool again with the same arguments just to re-read it."
 )
 
 
