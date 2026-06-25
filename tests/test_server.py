@@ -103,3 +103,26 @@ def test_read_pdf_render_page_stamps_meta(tmp_path):
     imgs = [b for b in blocks if b.type == "image"]
     assert len(imgs) == 1
     assert imgs[0].meta == {"path": "doc.pdf", "kind": "pdf_page", "page": 1}
+
+
+def test_build_server_sets_host_and_port(tmp_path):
+    mcp = build_server(Root(tmp_path), host="0.0.0.0", port=1234)
+    assert (mcp.settings.host, mcp.settings.port) == ("0.0.0.0", 1234)
+
+
+def test_no_auth_by_default(tmp_path):
+    assert build_server(Root(tmp_path)).settings.auth is None
+
+
+def test_auth_token_enables_auth(tmp_path):
+    mcp = build_server(Root(tmp_path), host="127.0.0.1", port=9000, auth_token="s3cret")
+    assert mcp.settings.auth is not None
+
+
+def test_static_token_verifier_accepts_and_rejects():
+    from filebridge_mcp.auth import StaticTokenVerifier
+
+    v = StaticTokenVerifier("good-secret")
+    assert asyncio.run(v.verify_token("good-secret")) is not None
+    assert asyncio.run(v.verify_token("wrong")) is None
+    assert asyncio.run(v.verify_token("")) is None

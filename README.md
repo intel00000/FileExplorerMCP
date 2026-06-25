@@ -43,10 +43,16 @@ Remote / multi-client (no auth — see Security):
 ```bash
 uv run filebridge-mcp --root /path/to/folder --http --port 8000              # binds 127.0.0.1 (local only)
 uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # accept remote connections
+FILEBRIDGE_AUTH_TOKEN=$(openssl rand -hex 16) \
+  uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # + require a bearer token
 ```
 
 `--http` binds `127.0.0.1` by default (reachable only from the same machine);
 pass `--host 0.0.0.0` (or a specific interface IP) to accept remote connections.
+Optionally require a shared-secret bearer token with `--auth-token <token>` (or the
+`FILEBRIDGE_AUTH_TOKEN` env var — preferred, since CLI args are visible in the
+process list); clients then send `Authorization: Bearer <token>` and anything else
+gets `401`. Auth applies to HTTP only.
 
 The root may also be supplied via the `MCP_ROOT` environment variable; `--root`
 takes precedence.
@@ -169,11 +175,14 @@ re-checked against the root before use. The server is **read-only by default**;
 writing and deleting require explicit `--allow-write` / `--allow-delete` at launch,
 and the tools are not registered otherwise. Even so, an enabled root grants full
 read/write **within** it: point it only at a folder you are willing to expose.
-HTTP mode
-has **no authentication** in this version and binds `127.0.0.1` by default —
-`--host 0.0.0.0` opens it to the network, so do not do that on an untrusted network
-without putting auth in front of it. Treat file *contents* as untrusted input to
-the model (prompt-injection risk).
+HTTP mode binds `127.0.0.1` by default; `--host 0.0.0.0` opens it to the network.
+Authentication is **off unless you set `--auth-token`** (a shared-secret bearer
+token) — without it, anyone who can reach the port can drive the tools, so only use
+unauthenticated HTTP on a trusted network or behind a proxy that adds auth. Note
+that HTTP mode does **not** enable DNS-rebinding / `Host`-header protection, so a
+malicious web page could reach a `127.0.0.1` instance; bind to a non-loopback host
+only behind auth. Treat file *contents* as untrusted input to the model
+(prompt-injection risk).
 
 ## Tests
 

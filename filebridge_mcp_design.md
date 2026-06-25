@@ -201,7 +201,9 @@ The core (explore, text read, binary hexdump, write, search) is standard-library
 
 **Guarantees.** Every path passes through the resolve-then-contain check (D5), so no tool can touch anything outside the root, including via symlinks. The server is **read-only by default**: the mutating tools are not registered at all unless the operator opts in at launch — `--allow-write` for `write_file`/`make_dir`, `--allow-delete` for `move`/`delete`. An unregistered tool is invisible to the model, a stronger guarantee than trusting the host to honor annotations. When enabled, the mutating tools are still annotated for hosts that gate by hint: `move` and `delete` carry `destructiveHint: true`; `delete` additionally requires an explicit `recursive` flag for non-empty directories.
 
-**Deployment cautions.** When write/delete are enabled the server grants full read/write within the root — point it only at a folder you are willing to fully expose. HTTP mode has **no authentication** in this version; do not expose it on an untrusted network without putting auth in front of it. Even with the sandbox, treat file *contents* as untrusted input to the model (injection risk is a host/model concern, not something the server can neutralize).
+**HTTP authentication.** HTTP mode is unauthenticated by default. Setting `--auth-token <token>` (or the `FILEBRIDGE_AUTH_TOKEN` env var, preferred so the secret stays out of the process list) registers a `TokenVerifier` that requires a matching `Authorization: Bearer <token>` on every request — a constant-time-compared shared secret, not OAuth; anything else gets `401`. Auth applies to the HTTP transport only (stdio has no headers). Note the server does **not** enable the SDK's DNS-rebinding / `Host`-header protection (`transport_security` is left unset, which disables it), so a malicious web page could reach a `127.0.0.1` instance; bind a non-loopback host only behind `--auth-token` or a fronting proxy.
+
+**Deployment cautions.** When write/delete are enabled the server grants full read/write within the root — point it only at a folder you are willing to fully expose. Do not expose unauthenticated HTTP on an untrusted network. Even with the sandbox, treat file *contents* as untrusted input to the model (injection risk is a host/model concern, not something the server can neutralize).
 
 ---
 
@@ -240,7 +242,7 @@ The one assumption that must be validated before relying on this server: **that 
 - **Binary writes**: accept base64 content in `write_file` (or a dedicated tool) and decode.
 - **Audio understanding**: `whisper.cpp` transcription, and a `get_subtitles(path, start, end)` tool that slices sidecar `.srt`/`.vtt` — so the model can "hear" dialogue, not only see frames.
 - **Native bulk-frame video**: an alternative to agentic seeking that feeds a frame sequence as a single multi-image input, leveraging M-RoPE temporal position IDs in Qwen2-VL/Qwen3-VL-class models for true video understanding.
-- **HTTP hardening**: authentication, a path allowlist, and rate limiting for multi-client deployment.
+- **HTTP hardening**: a path allowlist, rate limiting, and opt-in DNS-rebinding protection (`transport_security`) for multi-client deployment. Bearer-token auth (`--auth-token`) is implemented; full OAuth via `auth_server_provider` remains an option.
 - **MCP Resources**: expose static/semi-static files as resources (URI templates) in addition to tools, for hosts that prefer resource-style access.
 
 ---
@@ -279,11 +281,14 @@ stdio (typical local host config):
 
 (Or `"command": "python", "args": ["-m", "filebridge_mcp", "--root", "/path/to/folder"]`.)
 
-HTTP (remote/multi-client); binds `127.0.0.1` unless `--host` is given:
+HTTP (remote/multi-client); binds `127.0.0.1` unless `--host` is given. Add a
+shared-secret bearer token with `--auth-token` / `FILEBRIDGE_AUTH_TOKEN`:
 
 ```bash
-uv run filebridge-mcp --root /path/to/folder --http --port 8000              # local only
-uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # remote
+uv run filebridge-mcp --root /path/to/folder --http --port 8000              # local only, no auth
+uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # remote, no auth
+FILEBRIDGE_AUTH_TOKEN=secret \
+  uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # remote + bearer token
 ```
 
 The root may also be supplied via the `MCP_ROOT` environment variable; `--root` takes precedence.
