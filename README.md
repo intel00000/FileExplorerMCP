@@ -79,6 +79,10 @@ The frame tools share these knobs:
 - **`output='inline' | 'file'`** — `inline` returns image content (default). **`file`** writes the frame(s) to the frames dir (`<root>/.filebridge_frames/`, override with `--frames-dir`) and returns *paths* instead of base64. This is the **mtmd fallback** (see below): a host that can't route inline images into the vision encoder can attach the saved file as a real image. It is the only path the read-only server writes to.
 - **`video_contact_sheet`** — tiles `count` evenly-spaced, timestamp-labeled frames into a single image (`cols` wide). One composite costs far fewer vision tokens than N separate frames; ideal for a first-pass overview. Needs Pillow.
 
+### Image identity (`_meta`)
+
+**Every** image block the server emits — `read_file` on an image, a rendered PDF page (`render_page=true`), and all the video frame tools — carries `_meta` with at least `{path, kind}`, plus `timestamp_sec`/`frame_index` for video. Because MCP tool results are an ordered array of *typed* blocks, the host isolates images with `[b for b in result.content if b.type == "image"]` and identifies each from its `_meta` — no dependence on block order, and a frame that fails to extract emits a JSON error block tagged with the same index. Text blocks (JSON metadata) flow into the context unchanged.
+
 ### The mtmd image seam (why `output='file'` exists)
 
 An MCP tool result carries an image as base64. Whether that base64 becomes *pixels for the vision encoder* or *inert text in the context window* is a host-side decision the server can't force (design §9). If inline images don't reach the model on your host, switch the frame/sheet tools to `output='file'` and have your frontend/backend attach the returned path as a real image on the next turn.

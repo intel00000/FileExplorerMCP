@@ -3,7 +3,7 @@ name = "filebridge-mcp"
 version = "0.1.0"
 description = "An MCP server that exposes one folder to a vision-language model — explore, read (projected to text/images), write, search, and timestamp-addressed video frame extraction."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Tom Tan" }]
 keywords = ["mcp", "vlm", "vision-language-model", "filesystem", "ffmpeg"]

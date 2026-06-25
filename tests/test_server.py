@@ -71,3 +71,26 @@ def test_write_blocked_when_not_allowed(tmp_path):
     with pytest.raises(Exception):  # tool isn't registered -> call fails
         asyncio.run(mcp.call_tool("write_file", {"path": "x.txt", "content": "hi"}))
     assert not (tmp_path / "x.txt").exists()
+
+
+def test_read_image_stamps_meta(tmp_path):
+    PILImage = pytest.importorskip("PIL.Image")
+    PILImage.new("RGB", (32, 24), (10, 20, 30)).save(tmp_path / "pic.png", format="PNG")
+    mcp = build_server(Root(tmp_path))
+    blocks = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": "pic.png"})))
+    imgs = [b for b in blocks if b.type == "image"]
+    assert len(imgs) == 1
+    assert imgs[0].meta == {"path": "pic.png", "kind": "image"}
+
+
+def test_read_pdf_render_page_stamps_meta(tmp_path):
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(str(tmp_path / "doc.pdf"))
+    doc.close()
+    mcp = build_server(Root(tmp_path))
+    blocks = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": "doc.pdf", "render_page": True})))
+    imgs = [b for b in blocks if b.type == "image"]
+    assert len(imgs) == 1
+    assert imgs[0].meta == {"path": "doc.pdf", "kind": "pdf_page", "page": 1}

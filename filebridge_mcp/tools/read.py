@@ -16,7 +16,7 @@ from pydantic import Field
 from .. import deps
 from ..config import DEFAULT_LINES, DEFAULT_MAX_DIM, HEXDUMP_BYTES, MAX_LINES, RO
 from ..detect import detect_kind, hexdump
-from ..media.images import downscaled_image
+from ..media.images import downscaled_image, image_content
 from ..sandbox import Root
 
 
@@ -69,14 +69,17 @@ def register(mcp, root: Root) -> None:
 
         if kind == "image":
             try:
-                return downscaled_image(p, max_dimension)
+                # Convert to ImageContent (preserves mime for png/jpeg/gif/webp/bmp/tiff)
+                # and stamp _meta so the host can identify the image, like the video tools.
+                ic = downscaled_image(p, max_dimension).to_image_content()
+                ic.meta = {"path": root.rel(p), "kind": "image"}
+                return ic
             except Exception as e:  # corrupt/truncated/unsupported image — report, don't crash
                 return json.dumps({"error": f"Could not open image '{root.rel(p)}': {e}"})
 
         if kind == "pdf":
             if not deps.HAVE_FITZ:
                 return json.dumps({"error": deps.PDF_MISSING})
-            from mcp.server.fastmcp import Image
             try:
                 doc = deps.fitz.open(p)
                 n = doc.page_count
@@ -86,7 +89,8 @@ def register(mcp, root: Root) -> None:
                     page = doc.load_page(offset - 1)
                     zoom = max_dimension / max(page.rect.width, page.rect.height)
                     pix = page.get_pixmap(matrix=deps.fitz.Matrix(zoom, zoom))
-                    return Image(data=pix.tobytes("png"), format="png")
+                    return image_content(pix.tobytes("png"), "png",
+                                         {"path": root.rel(p), "kind": "pdf_page", "page": offset})
                 texts = []
                 for i in range(offset - 1, min(offset - 1 + limit, n)):
                     texts.append(f"--- page {i + 1} ---\n{doc.load_page(i).get_text()}")

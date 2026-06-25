@@ -88,6 +88,8 @@ stdio is the default (the standard local-MCP transport; how hosts launch the ser
 
 **Response envelope.** Tools return either a JSON string (for metadata and text) or image content (for images and frames). JSON responses are pretty-printed objects. Errors are returned as JSON `{"error": "...message..."}` with an actionable message rather than raised, so the model can read and react to them.
 
+**Image identity.** Every image block — `read_file` on an image, a rendered PDF page, and the video frame tools — is returned as a typed `ImageContent` with `_meta` stamped (`{path, kind}` at minimum, plus `timestamp_sec`/`frame_index` for video). Since a tool result is an ordered array of typed blocks, the host isolates images by type and identifies each from its `_meta` without relying on position; a frame that fails to extract emits an error block carrying the same `frame_index`. (Multi-image returns also include a leading JSON summary for convenience.)
+
 **Slice semantics.** `offset`/`limit` are *generic pagination* whose unit depends on file kind: **lines** for text, **pages** for PDF. Text and PDF responses include a `next_offset` (null when exhausted) so the model can page forward. Byte-level slicing of arbitrary files is a separate tool (`read_bytes`). Video slicing is by **time** (`video_frames`).
 
 **Bounds.** Every potentially large result is capped, with the cap exposed as a parameter and a `truncated`/`next_offset` signal in the response. Defaults: text 400 lines (max 5000), directory 500 entries (max 2000), glob 500 paths, grep 200 matches, frames 8 (max 64), image/frame longest edge 1024 px (max 4096).
