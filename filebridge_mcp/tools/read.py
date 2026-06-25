@@ -142,9 +142,9 @@ def register(
             except (
                 Exception
             ) as e:  # corrupt/truncated/unsupported image — report, don't crash
-                return json.dumps(
-                    {"error": f"Could not open image '{root.rel(p)}': {e}"}
-                )
+                return json.dumps({
+                    "error": root.scrub(f"Could not open image '{root.rel(p)}': {e}")
+                })
 
         if kind == "pdf":
             if not deps.HAVE_FITZ:
@@ -154,11 +154,9 @@ def register(
                 n = doc.page_count
                 if render_page:
                     if offset > n:
-                        return json.dumps(
-                            {
-                                "error": f"PDF has {n} pages; offset {offset} out of range"
-                            }
-                        )
+                        return json.dumps({
+                            "error": f"PDF has {n} pages; offset {offset} out of range"
+                        })
                     page = doc.load_page(offset - 1)
                     # A vector page has no native pixel size, so an uncapped (None)
                     # request falls back to a sane render resolution.
@@ -192,36 +190,32 @@ def register(
                     indent=2,
                 )
             except Exception as e:  # damaged/encrypted PDF — report, don't crash
-                return json.dumps({"error": f"Could not read PDF '{root.rel(p)}': {e}"})
+                return json.dumps({
+                    "error": root.scrub(f"Could not read PDF '{root.rel(p)}': {e}")
+                })
 
         if kind == "office":
-            return json.dumps(
-                {
-                    "path": root.rel(p),
-                    "kind": "office",
-                    "mime": mime,
-                    "note": "Office extraction is an extension point (use python-docx/"
-                    "python-pptx/openpyxl). Not implemented in this skeleton.",
-                }
-            )
+            return json.dumps({
+                "path": root.rel(p),
+                "kind": "office",
+                "mime": mime,
+                "note": "Office extraction is an extension point (use python-docx/"
+                "python-pptx/openpyxl). Not implemented in this skeleton.",
+            })
         if kind == "archive":
-            return json.dumps(
-                {
-                    "path": root.rel(p),
-                    "kind": "archive",
-                    "note": "Archive listing is an extension point. Inspect entries before extracting.",
-                }
-            )
+            return json.dumps({
+                "path": root.rel(p),
+                "kind": "archive",
+                "note": "Archive listing is an extension point. Inspect entries before extracting.",
+            })
         if kind in ("video", "audio"):
-            return json.dumps(
-                {
-                    "path": root.rel(p),
-                    "kind": kind,
-                    "mime": mime,
-                    "note": "Use stat for metadata and video_frame/video_frames to view footage; "
-                    "raw media bytes are not returned.",
-                }
-            )
+            return json.dumps({
+                "path": root.rel(p),
+                "kind": kind,
+                "mime": mime,
+                "note": "Use stat for metadata and video_frame/video_frames to view footage; "
+                "raw media bytes are not returned.",
+            })
 
         with p.open("rb") as fh:
             data = fh.read(HEXDUMP_BYTES)

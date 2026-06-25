@@ -94,3 +94,36 @@ def test_symlink_escape_rejected(tmp_path):
     with pytest.raises(ValueError):
         root.resolve("escape/secret.txt")
     assert not root.is_within(link / "secret.txt")
+
+
+def test_reserved_device_names_rejected_on_windows(tmp_path, monkeypatch):
+    """On Windows, reserved device names (CON/NUL/COM1...) must be rejected even
+    though they sit lexically under the root."""
+    from filebridge_mcp import sandbox
+
+    monkeypatch.setattr(sandbox, "_is_windows", lambda: True)
+    root = sandbox.Root(tmp_path)
+    for name in ["CON", "nul", "COM1", "LPT9", "AUX", "CON.txt", "sub/PRN", "con "]:
+        with pytest.raises(ValueError):
+            root.resolve(name)
+    # A normal name is unaffected.
+    assert root.resolve("notes.txt") == (tmp_path / "notes.txt").resolve()
+
+
+def test_reserved_device_names_allowed_off_windows(tmp_path, monkeypatch):
+    """On POSIX, NUL/CON are legal filenames and must stay accessible."""
+    from filebridge_mcp import sandbox
+
+    monkeypatch.setattr(sandbox, "_is_windows", lambda: False)
+    root = sandbox.Root(tmp_path)
+    assert root.resolve("NUL") == (tmp_path / "NUL").resolve()
+    assert root.resolve("COM1.log") == (tmp_path / "COM1.log").resolve()
+
+
+def test_scrub_redacts_absolute_root_prefix(tmp_path):
+    root = Root(tmp_path)
+    p = root.resolve("sub/clip.mp4")
+    msg = f"ffmpeg failed on {p}: bad data"
+    scrubbed = root.scrub(msg)
+    assert str(tmp_path) not in scrubbed
+    assert "sub/clip.mp4" in scrubbed.replace("\\", "/")

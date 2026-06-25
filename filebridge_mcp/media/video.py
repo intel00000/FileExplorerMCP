@@ -14,18 +14,35 @@ from pathlib import Path
 from typing import Optional
 
 
-def ffprobe(p: Path) -> dict:
-    """Return the parsed ``ffprobe -of json`` (format + streams) for a media file."""
+def _timeout_msg(binary: str, timeout: float) -> str:
+    """A model-facing message for a subprocess timeout that nudges the model to ease
+    off — a timeout here usually means too many heavy frame/probe calls at once."""
+    return (
+        f"{binary} timed out after {timeout:g}s. The server may be overloaded — "
+        f"slow down and avoid issuing many video/frame requests at once, then retry. "
+        f"(An operator can raise or disable this limit with --ffmpeg-timeout.)"
+    )
+
+
+def ffprobe(p: Path, timeout: Optional[float] = None) -> dict:
+    """Return the parsed ``ffprobe -of json`` (format + streams) for a media file.
+
+    `timeout` (seconds, None = unbounded) caps the probe so a pathological file
+    cannot hang the server.
+    """
     cmd = ["ffprobe", "-loglevel", "error", "-show_format", "-show_streams", "-of", "json", str(p)]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(_timeout_msg("ffprobe", timeout))
     if res.returncode != 0:
         raise RuntimeError(res.stderr.strip()[:300] or "ffprobe failed")
     return json.loads(res.stdout)
 
 
-def duration(p: Path) -> float:
+def duration(p: Path, timeout: Optional[float] = None) -> float:
     """Best-effort media duration in seconds (format duration, then any stream)."""
-    info = ffprobe(p)
+    info = ffprobe(p, timeout)
     dur = info.get("format", {}).get("duration")
     if dur is None:
         for s in info.get("streams", []):
@@ -48,10 +65,13 @@ def _jpeg_qscale(quality: int) -> int:
 
 
 def extract_frame(p: Path, t: float, max_dim: Optional[int],
-                  fmt: str = "png", quality: int = 85) -> bytes:
+                  fmt: str = "png", quality: int = 85,
+                  timeout: Optional[float] = None) -> bytes:
     """Grab one frame at time `t` (seconds). Fast keyframe seek (-ss before -i).
 
     `fmt` is 'png' (lossless) or 'jpeg' (far smaller; `quality` 1..100 applies).
+    `timeout` (seconds, None = unbounded) caps extraction so a pathological file
+    cannot hang the server.
     """
     fmt = norm_format(fmt)
     cmd = ["ffmpeg", "-loglevel", "error", "-ss", f"{max(t, 0):.3f}", "-i", str(p), "-frames:v", "1"]
@@ -62,7 +82,10 @@ def extract_frame(p: Path, t: float, max_dim: Optional[int],
     else:
         cmd += ["-c:v", "png"]
     cmd += ["-f", "image2", "-"]
-    res = subprocess.run(cmd, capture_output=True)
+    try:
+        res = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(_timeout_msg("ffmpeg", timeout))
     if res.returncode != 0 or not res.stdout:
         raise RuntimeError(res.stderr.decode(errors="replace").strip()[:300] or "ffmpeg produced no frame")
     return res.stdout

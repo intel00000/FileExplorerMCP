@@ -20,6 +20,7 @@ frame that fails to extract emits a JSON error block tagged with the same index.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -63,10 +64,37 @@ def register(
     max_image_dim: Optional[int] = None,
     image_format: Optional[str] = None,
     image_quality: Optional[int] = None,
+    ffmpeg_timeout: Optional[float] = None,
+    frames_ttl: Optional[float] = None,
 ) -> None:
     cache_dir = (
         frames_dir if frames_dir is not None else (root.base / ".filebridge_frames")
     )
+
+    # output='file' artifacts are named with these prefixes so the TTL sweep can
+    # recognize and reclaim *our* files without touching unrelated files an operator
+    # may keep in a custom --frames-dir.
+    _FRAME_PREFIX = "fbframe_"
+    _SHEET_PREFIX = "fbsheet_"
+
+    def _sweep_frames() -> None:
+        """Best-effort cleanup of previously written frame/sheet files older than the
+        TTL, so output='file' artifacts don't pile up over a long session.
+
+        Only our own prefixed files are considered, and only those older than the TTL —
+        a frame just handed to the host to attach on the next turn (seconds old) is
+        never removed. A falsy or non-positive frames_ttl disables the sweep.
+        """
+        if not frames_ttl or frames_ttl <= 0 or not cache_dir.exists():
+            return
+        cutoff = time.time() - frames_ttl
+        for prefix in (_FRAME_PREFIX, _SHEET_PREFIX):
+            for f in cache_dir.glob(prefix + "*"):
+                try:
+                    if f.is_file() and f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except OSError:
+                    pass
 
     def _save_frame(data: bytes, src: Path, t: float, fmt: str) -> str:
         """Write a frame under the frames dir; return its path (relative to root)."""
@@ -74,7 +102,7 @@ def register(
         stem = root.rel(src).replace("/", "_")
         stem = stem.rsplit(".", 1)[0] if "." in stem else stem
         cache_dir.mkdir(parents=True, exist_ok=True)
-        out = cache_dir / f"{stem}_{t:09.3f}.{ext}"
+        out = cache_dir / f"{_FRAME_PREFIX}{stem}_{t:09.3f}.{ext}"
         out.write_bytes(data)
         return root.rel(out)
 
@@ -94,12 +122,12 @@ def register(
         if not p.is_file():
             return json.dumps({"error": f"Not a file: {path}"})
         try:
-            info = ffprobe(p)
+            info = ffprobe(p, ffmpeg_timeout)
         except RuntimeError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": root.scrub(str(e))})
         out = {
             "path": root.rel(p),
-            "duration_sec": round(duration(p), 3),
+            "duration_sec": round(duration(p, ffmpeg_timeout), 3),
             "width": None,
             "height": None,
             "fps": None,
@@ -160,19 +188,20 @@ def register(
         q = quality or image_quality or 85
         try:
             if percent is not None:
-                t = max(0.0, min(100.0, percent)) / 100.0 * duration(p)
+                t = max(0.0, min(100.0, percent)) / 100.0 * duration(p, ffmpeg_timeout)
             elif timestamp is not None:
                 t = timestamp
             else:
-                return json.dumps(
-                    {"error": "Provide timestamp (seconds) or percent (0-100)."}
-                )
+                return json.dumps({
+                    "error": "Provide timestamp (seconds) or percent (0-100)."
+                })
             data = extract_frame(
-                p, t, resolve_dim(max_dimension, max_image_dim), fmt, q
+                p, t, resolve_dim(max_dimension, max_image_dim), fmt, q, ffmpeg_timeout
             )
         except Exception as e:
-            return json.dumps({"error": f"Frame extraction failed: {e}"})
+            return json.dumps({"error": root.scrub(f"Frame extraction failed: {e}")})
         if output == "file":
+            _sweep_frames()
             return json.dumps(
                 {
                     "path": root.rel(p),
@@ -233,9 +262,9 @@ def register(
         q = quality or image_quality or 85
         dim = resolve_dim(max_dimension, max_image_dim)
         try:
-            dur = duration(p)
+            dur = duration(p, ffmpeg_timeout)
         except RuntimeError as e:
-            msg = json.dumps({"error": str(e)})
+            msg = json.dumps({"error": root.scrub(str(e))})
             return [msg] if output == "inline" else msg
 
         if timestamps:
@@ -245,11 +274,9 @@ def register(
         else:
             hi = dur if end is None else min(end, dur)
             if hi <= start:
-                msg = json.dumps(
-                    {
-                        "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
-                    }
-                )
+                msg = json.dumps({
+                    "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
+                })
                 return [msg] if output == "inline" else msg
             if count == 1:
                 stamps = [round(start, 3)]
@@ -258,19 +285,18 @@ def register(
                 stamps = [round(start + i * step, 3) for i in range(count)]
 
         if output == "file":
+            _sweep_frames()
             frames = []
             for t in stamps:
                 try:
-                    frames.append(
-                        {
-                            "timestamp_sec": t,
-                            "frame_path": _save_frame(
-                                extract_frame(p, t, dim, fmt, q), p, t, fmt
-                            ),
-                        }
-                    )
+                    frames.append({
+                        "timestamp_sec": t,
+                        "frame_path": _save_frame(
+                            extract_frame(p, t, dim, fmt, q, ffmpeg_timeout), p, t, fmt
+                        ),
+                    })
                 except Exception as e:
-                    frames.append({"timestamp_sec": t, "error": str(e)})
+                    frames.append({"timestamp_sec": t, "error": root.scrub(str(e))})
             return json.dumps(
                 {"path": root.rel(p), "format": fmt, "frames": frames}, indent=2
             )
@@ -278,7 +304,7 @@ def register(
         results: list = [json.dumps({"path": root.rel(p), "timestamps_sec": stamps})]
         for i, t in enumerate(stamps):
             try:
-                data = extract_frame(p, t, dim, fmt, q)
+                data = extract_frame(p, t, dim, fmt, q, ffmpeg_timeout)
                 results.append(
                     image_content(
                         data,
@@ -288,13 +314,11 @@ def register(
                 )
             except Exception as e:
                 results.append(
-                    json.dumps(
-                        {
-                            "error": f"frame at {t}s failed: {e}",
-                            "frame_index": i,
-                            "timestamp_sec": t,
-                        }
-                    )
+                    json.dumps({
+                        "error": root.scrub(f"frame at {t}s failed: {e}"),
+                        "frame_index": i,
+                        "timestamp_sec": t,
+                    })
                 )
         return results
 
@@ -331,9 +355,9 @@ def register(
         if err:
             return json.dumps({"error": err})
         if not compose.available():
-            return json.dumps(
-                {"error": "Contact sheet needs Pillow. Run: pip install pillow"}
-            )
+            return json.dumps({
+                "error": "Contact sheet needs Pillow. Run: pip install pillow"
+            })
         p = root.resolve(path)
         if not p.is_file():
             return json.dumps({"error": f"Not a file: {path}"})
@@ -343,16 +367,14 @@ def register(
         # request falls back to a sane composite size rather than tiling native frames.
         dim = resolve_dim(max_dimension, max_image_dim) or PDF_RENDER_DIM
         try:
-            dur = duration(p)
+            dur = duration(p, ffmpeg_timeout)
         except RuntimeError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": root.scrub(str(e))})
         hi = dur if end is None else min(end, dur)
         if hi <= start:
-            return json.dumps(
-                {
-                    "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
-                }
-            )
+            return json.dumps({
+                "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
+            })
         if count == 1:
             stamps = [round(start, 3)]
         else:
@@ -363,26 +385,28 @@ def register(
         tiles = []
         for t in stamps:
             try:
-                tiles.append(
-                    (f"{t:.2f}s", extract_frame(p, t, tile_w, "png"))
-                )  # png tiles for clean compositing
+                tiles.append((
+                    f"{t:.2f}s",
+                    extract_frame(p, t, tile_w, "png", timeout=ffmpeg_timeout),
+                ))  # png tiles for clean compositing
             except Exception:
                 continue
         if not tiles:
-            return json.dumps(
-                {"error": "No frames could be extracted for the contact sheet."}
-            )
+            return json.dumps({
+                "error": "No frames could be extracted for the contact sheet."
+            })
         try:
             sheet = compose.contact_sheet(tiles, cols, dim, fmt, q)
         except RuntimeError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": root.scrub(str(e))})
 
         if output == "file":
+            _sweep_frames()
             stem = root.rel(p).replace("/", "_").rsplit(".", 1)[0]
             cache_dir.mkdir(parents=True, exist_ok=True)
             out = (
                 cache_dir
-                / f"{stem}_sheet_{len(tiles)}.{'jpg' if fmt == 'jpeg' else 'png'}"
+                / f"{_SHEET_PREFIX}{stem}_sheet_{len(tiles)}.{'jpg' if fmt == 'jpeg' else 'png'}"
             )
             out.write_bytes(sheet)
             return json.dumps(

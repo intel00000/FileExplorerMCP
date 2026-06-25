@@ -20,6 +20,8 @@ def register_all(
     max_image_dim: Optional[int] = None,
     image_format: Optional[str] = None,
     image_quality: Optional[int] = None,
+    ffmpeg_timeout: Optional[float] = None,
+    frames_ttl: Optional[float] = None,
 ) -> None:
     """Register the tool catalog on `mcp`, all confined to `root`.
 
@@ -30,8 +32,10 @@ def register_all(
     ``<root>/.filebridge_frames``). `max_image_dim`, if set, is a server-side
     ceiling clamped onto every image/frame's `max_dimension`. `image_format` /
     `image_quality` are server-side encoding defaults the model can override per call.
+    `ffmpeg_timeout` (seconds, None = unbounded) bounds every ffmpeg/ffprobe call.
+    `frames_ttl` (seconds, None/<=0 = keep) ages out old output='file' frames.
     """
-    explore.register(mcp, root)
+    explore.register(mcp, root, ffmpeg_timeout=ffmpeg_timeout)
     read.register(
         mcp,
         root,
@@ -48,4 +52,6 @@ def register_all(
         max_image_dim=max_image_dim,
         image_format=image_format,
         image_quality=image_quality,
+        ffmpeg_timeout=ffmpeg_timeout,
+        frames_ttl=frames_ttl,
     )

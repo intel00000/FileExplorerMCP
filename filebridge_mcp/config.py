@@ -17,6 +17,8 @@ PDF_RENDER_DIM = 1024  # fallback render size for PDF pages / contact sheets whe
 HEXDUMP_BYTES = 256  # bytes shown for unknown-binary reads
 TEXT_SNIFF_BYTES = 4096  # bytes sampled to decide "is this text?"
 GREP_MAX_FILE = 5_000_000  # skip files larger than this when grepping
+GREP_LINE_MAX = 2000  # max characters scanned per line (bounds per-line regex backtracking)
+GREP_TIME_BUDGET = 5.0  # overall wall-clock budget (seconds) for one grep call (ReDoS guard)
 
 
 def resolve_dim(requested: "int | None", limit: "int | None") -> "int | None":

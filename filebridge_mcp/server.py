@@ -47,6 +47,8 @@ def build_server(
     max_image_dim: "int | None" = None,
     image_format: "str | None" = None,
     image_quality: "int | None" = None,
+    ffmpeg_timeout: "float | None" = None,
+    frames_ttl: "float | None" = None,
 ) -> FastMCP:
     """Create a FastMCP server with the tool catalog bound to `root`.
 
@@ -60,7 +62,9 @@ def build_server(
     unset means no server cap — the per-call `max_dimension` alone decides, and
     omitting both returns native resolution. `image_format` / `image_quality` are
     server-side encoding defaults (png/jpeg, 1..100) that a per-call `format` /
-    `quality` overrides.
+    `quality` overrides. `ffmpeg_timeout` (seconds, None = unbounded) bounds every
+    ffmpeg/ffprobe call so a pathological media file can't hang the server.
+    `frames_ttl` (seconds, None/<=0 = keep) ages out old output='file' frames.
     """
     auth_kwargs: dict = {}
     if auth_token:
@@ -94,6 +98,8 @@ def build_server(
         max_image_dim=max_image_dim,
         image_format=image_format,
         image_quality=image_quality,
+        ffmpeg_timeout=ffmpeg_timeout,
+        frames_ttl=frames_ttl,
     )
     return mcp
 
@@ -153,6 +159,15 @@ def main() -> None:
         "read-only server writes to.",
     )
     ap.add_argument(
+        "--frames-ttl",
+        type=float,
+        default=3600.0,
+        metavar="SECONDS",
+        help="Age out output='file' video frames/sheets older than this many seconds "
+        "(swept on the next frame write; only files this server created are removed). "
+        "Set 0 to keep them indefinitely. Default: 3600.",
+    )
+    ap.add_argument(
         "--max-image-dimension",
         type=int,
         default=None,
@@ -178,6 +193,15 @@ def main() -> None:
         metavar="1-100",
         help="Default JPEG quality (1-100, higher=better) when images are encoded as "
         "jpeg. The model can override per call. Default: 85.",
+    )
+    ap.add_argument(
+        "--ffmpeg-timeout",
+        type=float,
+        default=60.0,
+        metavar="SECONDS",
+        help="Max seconds each ffmpeg/ffprobe call may run before it is aborted "
+        "(video tools and stat on media). On timeout the tool returns an error asking "
+        "the model to slow down. Set 0 to disable the limit. Default: 60.",
     )
     ap.add_argument(
         "--http", action="store_true", help="Use streamable HTTP instead of stdio."
@@ -217,6 +241,11 @@ def main() -> None:
     image_quality = (
         max(1, min(100, args.image_quality)) if args.image_quality is not None else None
     )
+    # 0 (or negative) means "no limit / keep forever" -> None.
+    ffmpeg_timeout = (
+        args.ffmpeg_timeout if args.ffmpeg_timeout and args.ffmpeg_timeout > 0 else None
+    )
+    frames_ttl = args.frames_ttl if args.frames_ttl and args.frames_ttl > 0 else None
 
     cors_origins: list[str] = []
     for item in args.cors_origin or []:
@@ -247,6 +276,8 @@ def main() -> None:
         max_image_dim=args.max_image_dimension,
         image_format=args.image_format,
         image_quality=image_quality,
+        ffmpeg_timeout=ffmpeg_timeout,
+        frames_ttl=frames_ttl,
     )
 
     enabled = ["read-only core"]

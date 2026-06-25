@@ -239,19 +239,35 @@ SDK, so the security core can be tested in a minimal environment (see `tests/`).
 ## Security
 
 All access is confined to `--root` via *resolve-then-contain* (D5): every path —
-including `glob`/`grep` results reached through symlinks — is fully resolved and
-re-checked against the root before use. The server is **read-only by default**;
-writing and deleting require explicit `--allow-write` / `--allow-delete` at launch,
-and the tools are not registered otherwise. Even so, an enabled root grants full
-read/write **within** it: point it only at a folder you are willing to expose.
+including `list_dir`, `glob`, and `grep` results reached through symlinks — is fully
+resolved and re-checked against the root before use, and directory walks never
+descend into a symlinked directory (no escape, no cycles).
+
+On Windows, reserved device names like (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`
+, `LPT1`-`LPT9`) are rejected since they denote devices rather than files in the 
+root. 
+
+The server is **read-only by default**; writing and deleting require explicit 
+`--allow-write` / `--allow-delete`at launch, and the tools are not registered 
+otherwise. Even so, an enabled root grants full read/write **within** it: point 
+it only at a folder you are willing to expose.
+
+Resource guards keep a confused or adversarial model from stalling the server:
+every `ffmpeg`/`ffprobe` call is bounded by `--ffmpeg-timeout` (default 60 s; a
+timeout returns an error asking the model to slow down), `grep` scans only the head
+of each line and gives up after a few seconds against catastrophic-backtracking
+patterns, and `output="file"` video frames are aged out by `--frames-ttl`
+(default 1 h). Error messages are scrubbed to root-relative paths so they don't
+disclose the server's filesystem layout.
+
 HTTP mode binds `127.0.0.1` by default; `--host 0.0.0.0` opens it to the network.
 Authentication is **off unless you set `--auth-token`** (a shared-secret bearer
 token) — without it, anyone who can reach the port can drive the tools, so only use
 unauthenticated HTTP on a trusted network or behind a proxy that adds auth. Note
-that HTTP mode does **not** enable DNS-rebinding / `Host`-header protection, so a
-malicious web page could reach a `127.0.0.1` instance; bind to a non-loopback host
-only behind auth. Treat file *contents* as untrusted input to the model
-(prompt-injection risk).
+that HTTP mode does **not** enable DNS-rebinding / `Host`-header protection (left off
+deliberately so local `http://127.0.0.1` testing isn't blocked), so a malicious web
+page could reach a `127.0.0.1` instance; bind to a non-loopback host only behind
+auth. Treat file *contents* as untrusted input to the model (prompt-injection risk).
 
 ## Tests
 

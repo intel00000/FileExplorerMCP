@@ -259,3 +259,107 @@ def test_ephemeral_image_keeps_both_meta_layers(tmp_path):
     imgs = [b for b in res.content if b.type == "image"]
     assert len(imgs) == 1
     assert imgs[0].meta == {"path": "pic.png", "kind": "image"}
+
+
+def test_list_dir_does_not_follow_escaping_symlink(tmp_path):
+    """list_dir must not enumerate a directory reached through a symlink that
+    escapes the root (design D5 containment, mirroring glob/grep)."""
+    root_dir = tmp_path / "root"
+    outside = tmp_path / "outside_secret"
+    root_dir.mkdir()
+    outside.mkdir()
+    (outside / "passwords.txt").write_text("hunter2\n")
+    (outside / "subdir").mkdir()
+    (outside / "subdir" / "more.txt").write_text("nested\n")
+    (root_dir / "ok.txt").write_text("fine\n")
+    link = root_dir / "escape"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    mcp = build_server(Root(root_dir))
+    blocks = _blocks(asyncio.run(mcp.call_tool("list_dir", {"path": ".", "depth": 3})))
+    paths = [e["path"] for e in json.loads(blocks[0].text)["entries"]]
+
+    assert "ok.txt" in paths  # in-root content still listed
+    # Nothing reached through the escaping symlink may appear.
+    assert not any("passwords.txt" in p for p in paths)
+    assert not any("more.txt" in p for p in paths)
+    assert not any(p.startswith("escape/") for p in paths)
+
+
+def test_list_dir_does_not_descend_symlinked_dir_in_root(tmp_path):
+    """A symlink to a directory *inside* the root is listed but not descended,
+    preventing symlink cycles. The real subtree still recurses."""
+    root_dir = tmp_path / "root"
+    real = root_dir / "real"
+    (real / "deep").mkdir(parents=True)
+    (real / "deep" / "leaf.txt").write_text("x\n")
+    link = root_dir / "alias"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted in this environment")
+
+    mcp = build_server(Root(root_dir))
+    blocks = _blocks(asyncio.run(mcp.call_tool("list_dir", {"path": ".", "depth": 5})))
+    paths = [e["path"] for e in json.loads(blocks[0].text)["entries"]]
+
+    assert "real/deep/leaf.txt" in paths  # real subtree recurses
+    # The in-root symlink is not expanded (no cycle/duplication through it).
+    assert not any(p.startswith("alias/") for p in paths)
+
+
+def test_read_file_text_paging(tmp_path):
+    """read_file text paging: returns the requested window, reports total_lines, and
+    signals end-of-file with next_offset=None."""
+    f = tmp_path / "big.txt"
+    f.write_text("".join(f"line{i}\n" for i in range(1, 1001)))  # 1000 lines
+    mcp = build_server(Root(tmp_path))
+
+    def read(**kw):
+        blocks = _blocks(
+            asyncio.run(mcp.call_tool("read_file", {"path": "big.txt", **kw}))
+        )
+        return json.loads(blocks[0].text)
+
+    first = read(offset=1, limit=10)
+    assert first["total_lines"] == 1000
+    assert first["returned_lines"] == 10
+    assert first["next_offset"] == 11
+    assert first["content"].startswith("line1\n")
+
+    tail = read(offset=995, limit=50)
+    assert tail["returned_lines"] == 6  # lines 995..1000
+    assert tail["next_offset"] is None  # exhausted
+    assert tail["content"].endswith("line1000\n")
+
+    past = read(offset=5000, limit=10)  # beyond EOF
+    assert past["returned_lines"] == 0
+    assert past["next_offset"] is None
+
+
+def test_grep_basic_match_and_line_length_cap(tmp_path):
+    """grep finds matches within the per-line scan cap and ignores content past it
+    (the ReDoS line-length guard)."""
+    from filebridge_mcp.config import GREP_LINE_MAX
+
+    (tmp_path / "a.txt").write_text("alpha\nbeta needle gamma\n")
+    # A single long line whose only match sits *beyond* the scan cap.
+    (tmp_path / "long.txt").write_text("x" * (GREP_LINE_MAX + 50) + "FINDME\n")
+    mcp = build_server(Root(tmp_path))
+
+    def grep(**kw):
+        blocks = _blocks(asyncio.run(mcp.call_tool("grep", kw)))
+        return json.loads(blocks[0].text)
+
+    hit = grep(pattern="needle")
+    assert hit["count"] == 1
+    assert hit["matches"][0]["line"] == 2
+    assert hit["matches"][0]["path"] == "a.txt"
+
+    # "FINDME" is past GREP_LINE_MAX, so the capped scan must not see it...
+    assert grep(pattern="FINDME")["count"] == 0
+    # ...but content within the cap on that same line is found.
+    assert grep(pattern="x{10}")["count"] >= 1

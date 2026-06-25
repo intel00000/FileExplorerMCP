@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Optional
 
 from pydantic import Field
 
@@ -14,7 +14,7 @@ from ..media.video import duration, ffprobe
 from ..sandbox import Root
 
 
-def register(mcp, root: Root) -> None:
+def register(mcp, root: Root, *, ffmpeg_timeout: Optional[float] = None) -> None:
     @mcp.tool(name="list_dir", annotations={"title": "List directory", **RO})
     def list_dir(
         path: Annotated[
@@ -50,21 +50,29 @@ def register(mcp, root: Root) -> None:
                 if len(entries) >= max_entries:
                     truncated = True
                     break
+                # Containment (design D5): a child reached through a symlink that
+                # escapes the root must not be enumerated. glob/grep already
+                # re-check every result with is_within; list_dir must too, or a
+                # symlinked directory leaks outside-root names, sizes, and kinds.
+                # is_within resolves the link target before deciding.
+                if not root.is_within(child):
+                    continue
+                is_link = child.is_symlink()
                 is_dir = child.is_dir()
                 try:
                     st = child.stat()
                     size, mtime = st.st_size, int(st.st_mtime)
                 except OSError:
                     size, mtime = 0, 0
-                entries.append(
-                    {
-                        "path": root.rel(child),
-                        "type": "dir" if is_dir else detect_kind(child)[0],
-                        "size": None if is_dir else size,
-                        "mtime": mtime,
-                    }
-                )
-                if is_dir and d + 1 < depth:
+                entries.append({
+                    "path": root.rel(child),
+                    "type": "dir" if is_dir else detect_kind(child)[0],
+                    "size": None if is_dir else size,
+                    "mtime": mtime,
+                })
+                # Never descend into a symlinked directory: prevents symlink-cycle
+                # loops and traversal through links. Real subdirectories still recurse.
+                if is_dir and not is_link and d + 1 < depth:
                     stack.append((child, d + 1))
             if truncated:
                 break
@@ -100,8 +108,8 @@ def register(mcp, root: Root) -> None:
         out["kind"], out["mime"] = kind, mime
         if kind in ("video", "audio") and not deps.require_ffmpeg():
             try:
-                info = ffprobe(p)
-                out["duration_sec"] = round(duration(p), 3)
+                info = ffprobe(p, ffmpeg_timeout)
+                out["duration_sec"] = round(duration(p, ffmpeg_timeout), 3)
                 for s in info.get("streams", []):
                     if s.get("codec_type") == "video":
                         out["width"], out["height"] = s.get("width"), s.get("height")
