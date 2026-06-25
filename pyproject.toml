@@ -10,22 +10,30 @@ keywords = ["mcp", "vlm", "vision-language-model", "filesystem", "ffmpeg"]
 
 # Core is the MCP SDK only; everything else degrades gracefully (design D6).
 dependencies = [
-    "mcp[cli]>=1.2.0",
+    "mcp[cli]>=1.28.0",
+    "pydantic>=2.13.4",
 ]
-
-[project.optional-dependencies]
-# Image downscaling (caps vision-encoder cost). Without it, images return at native size.
-image = ["pillow>=10.0.0"]
-# PDF text extraction + page rasterization. Without it, PDF tools return an actionable error.
-pdf = ["pymupdf>=1.24.0"]
-# Everything optional that is pip-installable (ffmpeg is a system binary, not here).
-all = ["pillow>=10.0.0", "pymupdf>=1.24.0"]
 
 [project.scripts]
 filebridge-mcp = "filebridge_mcp.server:main"
 
 [project.urls]
 Homepage = "https://modelcontextprotocol.io"
+
+[project.optional-dependencies]
+# Image downscaling + contact-sheet composition. Without it, images return at native size.
+image = [
+    "pillow>=12.2.0",
+]
+# PDF text extraction + page rasterization. Without it, PDF tools return an actionable error.
+pdf = [
+    "pymupdf>=1.27.2.3",
+]
+# Everything pip-installable (ffmpeg is a system binary, not here). Self-references the
+# extras above so versions live in one place: `uv sync --extra all` / `pip install .[all]`.
+all = [
+    "filebridge-mcp[image,pdf]",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -34,12 +42,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["filebridge_mcp"]
 
-# uv-native dev dependencies: `uv sync` installs these for local work.
-[dependency-groups]
-dev = [
-    "pytest>=8.0",
-]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

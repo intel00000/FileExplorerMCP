@@ -225,7 +225,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -238,6 +238,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
+    { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
@@ -259,16 +260,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
-    { name = "pillow", marker = "extra == 'all'", specifier = ">=10.0.0" },
-    { name = "pillow", marker = "extra == 'image'", specifier = ">=10.0.0" },
-    { name = "pymupdf", marker = "extra == 'all'", specifier = ">=1.24.0" },
-    { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.24.0" },
+    { name = "filebridge-mcp", extras = ["image", "pdf"], marker = "extra == 'all'" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.28.0" },
+    { name = "pillow", marker = "extra == 'image'", specifier = ">=12.2.0" },
+    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.27.2.3" },
 ]
 provides-extras = ["image", "pdf", "all"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0" }]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "h11"
