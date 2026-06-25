@@ -174,6 +174,10 @@ def register(
                         page_fmt,
                         {"path": root.rel(p), "kind": "pdf_page", "page": offset},
                     )
+                if offset > n:
+                    return json.dumps({
+                        "error": f"PDF has {n} pages; offset {offset} out of range"
+                    })
                 texts = []
                 for i in range(offset - 1, min(offset - 1 + limit, n)):
                     texts.append(f"--- page {i + 1} ---\n{doc.load_page(i).get_text()}")
@@ -256,7 +260,7 @@ def register(
                 "offset": offset,
                 "length": len(data),
                 "total_size": size,
-                "hexdump": hexdump(data),
+                "hexdump": hexdump(data, offset),
             },
             indent=2,
         )

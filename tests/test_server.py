@@ -363,3 +363,92 @@ def test_grep_basic_match_and_line_length_cap(tmp_path):
     assert grep(pattern="FINDME")["count"] == 0
     # ...but content within the cap on that same line is found.
     assert grep(pattern="x{10}")["count"] >= 1
+
+
+def test_read_file_image_preserves_transparency(tmp_path):
+    """A downscaled/re-encoded PNG must keep its alpha channel: it used to be
+    flattened to RGB (convert('RGB')), turning transparent pixels opaque."""
+    PILImage = pytest.importorskip("PIL.Image")
+    import base64
+    import io
+
+    PILImage.new("RGBA", (128, 128), (255, 0, 0, 0)).save(
+        tmp_path / "logo.png", format="PNG"
+    )
+    mcp = build_server(Root(tmp_path))
+    blocks = _blocks(
+        asyncio.run(
+            mcp.call_tool("read_file", {"path": "logo.png", "max_dimension": 64})
+        )
+    )
+    img = next(b for b in blocks if b.type == "image")
+    out = PILImage.open(io.BytesIO(base64.b64decode(img.data)))
+    assert out.mode == "RGBA"
+    assert out.getpixel((0, 0))[3] == 0
+
+
+def test_delete_refuses_sandbox_root(tmp_path):
+    """delete('.', recursive=True) must not wipe the sandbox root itself."""
+    (tmp_path / "keep.txt").write_text("data\n")
+    mcp = build_server(Root(tmp_path), allow_delete=True)
+    payload = json.loads(
+        _blocks(asyncio.run(mcp.call_tool("delete", {"path": ".", "recursive": True})))[
+            0
+        ].text
+    )
+    assert "error" in payload
+    assert (tmp_path / "keep.txt").exists()
+
+
+def test_write_file_into_directory_errors_gracefully(tmp_path):
+    """Writing onto an existing directory returns a JSON error, not a raw exception."""
+    (tmp_path / "adir").mkdir()
+    mcp = build_server(Root(tmp_path), allow_write=True)
+    payload = json.loads(
+        _blocks(
+            asyncio.run(mcp.call_tool("write_file", {"path": "adir", "content": "x"}))
+        )[0].text
+    )
+    assert "error" in payload
+
+
+def test_make_dir_over_existing_file_errors_gracefully(tmp_path):
+    """make_dir where a file already exists returns a JSON error, not FileExistsError."""
+    (tmp_path / "afile").write_text("hi\n")
+    mcp = build_server(Root(tmp_path), allow_write=True)
+    payload = json.loads(
+        _blocks(asyncio.run(mcp.call_tool("make_dir", {"path": "afile"})))[0].text
+    )
+    assert "error" in payload
+    assert (tmp_path / "afile").is_file()
+
+
+def test_move_into_existing_directory_reports_final_path(tmp_path):
+    """Moving into an existing directory reports the real final path d/<name>."""
+    (tmp_path / "f.txt").write_text("hi\n")
+    (tmp_path / "dest").mkdir()
+    mcp = build_server(Root(tmp_path), allow_delete=True)
+    payload = json.loads(
+        _blocks(asyncio.run(mcp.call_tool("move", {"src": "f.txt", "dst": "dest"})))[
+            0
+        ].text
+    )
+    assert payload["dst"] == "dest/f.txt"
+    assert (tmp_path / "dest" / "f.txt").exists()
+
+
+def test_pdf_text_offset_past_end_errors(tmp_path):
+    """Reading PDF text past the last page returns an error, like render_page."""
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(str(tmp_path / "doc.pdf"))
+    doc.close()
+    mcp = build_server(Root(tmp_path))
+    payload = json.loads(
+        _blocks(
+            asyncio.run(mcp.call_tool("read_file", {"path": "doc.pdf", "offset": 5}))
+        )[0].text
+    )
+    assert "error" in payload
+    assert "out of range" in payload["error"]

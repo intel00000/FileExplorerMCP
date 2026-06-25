@@ -92,3 +92,20 @@ def test_hexdump_format():
     assert "41 42 43 00 ff" in dump
     # Non-printable bytes render as '.'; printable ASCII stays.
     assert dump.rstrip().endswith("ABC..")
+
+
+def test_hexdump_base_offset():
+    # The address column reflects a non-zero base, e.g. a slice read at offset 0x1000
+    dump = hexdump(b"ABCD", base=0x1000)
+    assert dump.startswith("00001000  ")
+    # Default base is still 0 (backward compatible).
+    assert hexdump(b"ABCD").startswith("00000000  ")
+
+
+def test_looks_text_false_for_tiny_non_utf8():
+    # A 1-2 byte non-UTF-8 file must not be misclassified as text: the [:-3] fallback
+    # used to produce an empty slice that decodes cleanly (BUG 8).
+    assert not looks_text(b"\xff\xfe")
+    assert not looks_text(b"\xff")
+    # Sanity: a short ASCII sample is still text.
+    assert looks_text(b"hi")

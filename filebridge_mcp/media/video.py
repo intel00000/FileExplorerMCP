@@ -52,6 +52,28 @@ def duration(p: Path, timeout: Optional[float] = None) -> float:
     return float(dur) if dur else 0.0
 
 
+def probe(p: Path, timeout: Optional[float] = None) -> "tuple[float, float]":
+    """Return ``(duration_seconds, fps)`` from a single ffprobe call.
+
+    ``fps`` is 0.0 when there is no video stream or no reported frame rate. The frame
+    tools use it to keep the last evenly-spaced sample about a frame inside the end —
+    a fast seek (`-ss` before `-i`) past the final frame's timestamp returns nothing.
+    """
+    info = ffprobe(p, timeout)
+    dur = info.get("format", {}).get("duration")
+    fps = 0.0
+    for s in info.get("streams", []):
+        if dur is None and s.get("duration"):
+            dur = s["duration"]
+        if s.get("codec_type") == "video" and not fps:
+            num, _, den = (s.get("avg_frame_rate") or "0/0").partition("/")
+            try:
+                fps = int(num) / int(den) if int(den) else 0.0
+            except ValueError:
+                fps = 0.0
+    return float(dur) if dur else 0.0, fps
+
+
 def norm_format(fmt: str) -> str:
     """Normalize a caller format string to 'png' or 'jpeg'."""
     f = (fmt or "png").lower()

@@ -48,11 +48,18 @@ def downscaled_image(
     the file is handed off by path at native resolution/format.
     """
     if (max_dim or fmt) and deps.HAVE_PIL:
+        from PIL import ImageOps
+
         with deps.PILImage.open(p) as im:
-            im = im.convert("RGB")
+            im = ImageOps.exif_transpose(im)  # honor camera orientation (no-op if none)
+            out = norm_format(fmt)  # None -> "png"
+            if out == "jpeg":
+                im = im.convert("RGB")  # JPEG has no alpha channel
+            elif im.mode not in ("RGB", "RGBA", "L", "LA"):
+                # PNG: normalize exotic modes (P/CMYK/I/…) but keep any transparency.
+                im = im.convert("RGBA")
             if max_dim:
                 im.thumbnail((max_dim, max_dim))
-            out = norm_format(fmt)  # None -> "png"
             buf = io.BytesIO()
             if out == "jpeg":
                 im.save(buf, format="JPEG", quality=quality or 85)

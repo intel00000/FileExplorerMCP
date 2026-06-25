@@ -178,3 +178,27 @@ def test_contact_sheet_output_file(video_root):
         )[0].text
     )
     assert (video_root / payload["sheet_path"]).exists()
+
+
+def test_frames_over_whole_clip_extracts_all(video_root):
+    """Evenly sampling the whole clip (end omitted) put the last sample at exactly
+    duration, which fails to extract. All requested frames must now come back (BUG 2)."""
+    mcp = build_server(Root(video_root))
+    blocks = _call(mcp, "video_frames", path="clip.mp4", count=5)
+    assert len(_images(blocks)) == 5
+
+
+def test_percent_100_returns_image(video_root):
+    """video_frame(percent=100) used to seek exactly at duration and fail (BUG 2)."""
+    mcp = build_server(Root(video_root))
+    assert len(_images(_call(mcp, "video_frame", path="clip.mp4", percent=100))) == 1
+
+
+@needs_pil
+def test_contact_sheet_over_whole_clip_keeps_all_tiles(video_root):
+    """The final tile (at t==duration) used to be silently dropped (BUG 2)."""
+    mcp = build_server(Root(video_root))
+    img = _images(_call(mcp, "video_contact_sheet", path="clip.mp4", count=6, cols=3))[
+        0
+    ]
+    assert img.meta["frame_count"] == 6

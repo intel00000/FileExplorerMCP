@@ -30,7 +30,7 @@ from .. import deps
 from ..config import DEFAULT_FRAMES, MAX_FRAMES, PDF_RENDER_DIM, RO, resolve_dim
 from ..media import compose
 from ..media.images import image_content
-from ..media.video import duration, extract_frame, ffprobe, norm_format
+from ..media.video import duration, extract_frame, ffprobe, norm_format, probe
 from ..sandbox import Root
 
 _FMT = Field(
@@ -54,6 +54,20 @@ _MAXDIM = Field(
     ge=64,
     le=8192,
 )
+
+# A fast seek (`-ss` before `-i`) past the final frame's timestamp returns no frame,
+# so cap any sample about 1.5 frames before the end. The margin is frame-rate-aware
+# (the last frame sits at ~dur - 1/fps); when fps is unknown a generous fallback keeps
+# the seek safely inside. Skipped when the duration is unknown (<= 0).
+_SEEK_FALLBACK_MARGIN = 0.5
+
+
+def _clamp_seek(t: float, dur: float, fps: float = 0.0) -> float:
+    """Clamp a seek time so it lands on a real frame (ms-rounded)."""
+    if dur and dur > 0:
+        margin = (1.5 / fps) if fps and fps > 0 else _SEEK_FALLBACK_MARGIN
+        t = min(t, max(0.0, dur - margin))
+    return round(max(0.0, t), 3)
 
 
 def register(
@@ -188,7 +202,8 @@ def register(
         q = quality or image_quality or 85
         try:
             if percent is not None:
-                t = max(0.0, min(100.0, percent)) / 100.0 * duration(p, ffmpeg_timeout)
+                dur, fps = probe(p, ffmpeg_timeout)
+                t = _clamp_seek(max(0.0, min(100.0, percent)) / 100.0 * dur, dur, fps)
             elif timestamp is not None:
                 t = timestamp
             else:
@@ -262,15 +277,13 @@ def register(
         q = quality or image_quality or 85
         dim = resolve_dim(max_dimension, max_image_dim)
         try:
-            dur = duration(p, ffmpeg_timeout)
+            dur, fps = probe(p, ffmpeg_timeout)
         except RuntimeError as e:
             msg = json.dumps({"error": root.scrub(str(e))})
             return [msg] if output == "inline" else msg
 
         if timestamps:
-            stamps = [
-                round(max(0.0, min(float(t), dur)), 3) for t in timestamps[:MAX_FRAMES]
-            ]
+            stamps = [_clamp_seek(float(t), dur, fps) for t in timestamps[:MAX_FRAMES]]
         else:
             hi = dur if end is None else min(end, dur)
             if hi <= start:
@@ -279,10 +292,10 @@ def register(
                 })
                 return [msg] if output == "inline" else msg
             if count == 1:
-                stamps = [round(start, 3)]
+                stamps = [_clamp_seek(start, dur, fps)]
             else:
                 step = (hi - start) / (count - 1)
-                stamps = [round(start + i * step, 3) for i in range(count)]
+                stamps = [_clamp_seek(start + i * step, dur, fps) for i in range(count)]
 
         if output == "file":
             _sweep_frames()
@@ -367,7 +380,7 @@ def register(
         # request falls back to a sane composite size rather than tiling native frames.
         dim = resolve_dim(max_dimension, max_image_dim) or PDF_RENDER_DIM
         try:
-            dur = duration(p, ffmpeg_timeout)
+            dur, fps = probe(p, ffmpeg_timeout)
         except RuntimeError as e:
             return json.dumps({"error": root.scrub(str(e))})
         hi = dur if end is None else min(end, dur)
@@ -376,10 +389,10 @@ def register(
                 "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
             })
         if count == 1:
-            stamps = [round(start, 3)]
+            stamps = [_clamp_seek(start, dur, fps)]
         else:
             step = (hi - start) / (count - 1)
-            stamps = [round(start + i * step, 3) for i in range(count)]
+            stamps = [_clamp_seek(start + i * step, dur, fps) for i in range(count)]
 
         tile_w = max(64, dim // max(1, cols))
         tiles = []

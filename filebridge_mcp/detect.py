@@ -21,7 +21,8 @@ def looks_text(sample: bytes) -> bool:
         sample.decode("utf-8")
         return True
     except UnicodeDecodeError:
-        # tolerate a partial multibyte char at the truncation boundary
+        if len(sample) <= 3:
+            return False
         try:
             sample[:-3].decode("utf-8")
             return True
@@ -53,7 +54,7 @@ def detect_kind(p: Path) -> tuple[str, str]:
         if head.startswith(sig):
             return kind, mime
     if head.startswith(b"PK\x03\x04"):
-        return ("office", "application/octet-stream") if ext in config.OFFICE_EXTS else ("archive", "application/zip")
+        return "archive", "application/zip"
     if ext in config.IMAGE_EXTS:
         return "image", mimetypes.guess_type(p.name)[0] or "image/unknown"
     if ext in config.ARCHIVE_EXTS:
@@ -63,12 +64,14 @@ def detect_kind(p: Path) -> tuple[str, str]:
     return "binary", mimetypes.guess_type(p.name)[0] or "application/octet-stream"
 
 
-def hexdump(data: bytes) -> str:
-    """Classic 16-byte-per-row hexdump with an ASCII gutter."""
+def hexdump(data: bytes, base: int = 0) -> str:
+    """Classic 16-byte-per-row hexdump with an ASCII gutter.
+
+    `base` is the virtual start address (default 0)."""
     out = []
     for i in range(0, len(data), 16):
-        chunk = data[i:i + 16]
+        chunk = data[i : i + 16]
         hexs = " ".join(f"{b:02x}" for b in chunk)
         ascii_ = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-        out.append(f"{i:08x}  {hexs:<47}  {ascii_}")
+        out.append(f"{base + i:08x}  {hexs:<47}  {ascii_}")
     return "\n".join(out)

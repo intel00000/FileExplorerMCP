@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field
@@ -20,7 +21,9 @@ from ..config import DESTRUCTIVE, WRITE
 from ..sandbox import Root
 
 
-def register(mcp, root: Root, *, allow_write: bool = False, allow_delete: bool = False) -> None:
+def register(
+    mcp, root: Root, *, allow_write: bool = False, allow_delete: bool = False
+) -> None:
     """Register mutating tools, gated by the launch flags.
 
     allow_write  -> write_file, make_dir
@@ -39,7 +42,13 @@ def _register_write(mcp, root: Root) -> None:
     def write_file(
         path: Annotated[str, Field(description="Destination file relative to root")],
         content: Annotated[str, Field(description="Text content to write")],
-        mode: Annotated[str, Field(description="'overwrite' (default) or 'append'", pattern="^(overwrite|append)$")] = "overwrite",
+        mode: Annotated[
+            str,
+            Field(
+                description="'overwrite' (default) or 'append'",
+                pattern="^(overwrite|append)$",
+            ),
+        ] = "overwrite",
     ) -> str:
         """Write or append UTF-8 text to a file (parent dirs are created as needed).
 
@@ -47,17 +56,39 @@ def _register_write(mcp, root: Root) -> None:
         {"path","mode","bytes_written"}.
         """
         p = root.resolve(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a" if mode == "append" else "w", encoding="utf-8") as f:
-            f.write(content)
-        return json.dumps({"path": root.rel(p), "mode": mode, "bytes_written": len(content.encode("utf-8"))})
+        if p.is_dir():
+            return json.dumps({"error": f"Is a directory, not a file: {path}"})
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a" if mode == "append" else "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError as e:
+            return json.dumps({
+                "error": root.scrub(f"Could not write '{root.rel(p)}': {e}")
+            })
+        return json.dumps({
+            "path": root.rel(p),
+            "mode": mode,
+            "bytes_written": len(content.encode("utf-8")),
+        })
 
     @mcp.tool(name="make_dir", annotations={"title": "Create a directory", **WRITE})
-    def make_dir(path: Annotated[str, Field(description="Directory to create, relative to root")]) -> str:
+    def make_dir(
+        path: Annotated[
+            str, Field(description="Directory to create, relative to root")
+        ],
+    ) -> str:
         """Create a directory (including parents). Returns JSON {"path","created"}."""
         p = root.resolve(path)
-        existed = p.exists()
-        p.mkdir(parents=True, exist_ok=True)
+        if p.exists() and not p.is_dir():
+            return json.dumps({"error": f"Path exists and is not a directory: {path}"})
+        existed = p.is_dir()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return json.dumps({
+                "error": root.scrub(f"Could not create '{root.rel(p)}': {e}")
+            })
         return json.dumps({"path": root.rel(p), "created": not existed})
 
 
@@ -72,24 +103,39 @@ def _register_delete(mcp, root: Root) -> None:
         if not s.exists():
             return json.dumps({"error": f"Source not found: {src}"})
         d.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(s), str(d))
-        return json.dumps({"src": root.rel(s), "dst": root.rel(d)})
+        try:
+            # shutil.move returns the real final path (handles "move into existing dir",
+            # where the file lands at d/<name> rather than at d).
+            final = shutil.move(str(s), str(d))
+        except OSError as e:
+            return json.dumps({
+                "error": root.scrub(f"Could not move '{root.rel(s)}': {e}")
+            })
+        return json.dumps({"src": root.rel(s), "dst": root.rel(Path(final))})
 
     @mcp.tool(name="delete", annotations={"title": "Delete a path", **DESTRUCTIVE})
     def delete(
-        path: Annotated[str, Field(description="File or folder to delete, relative to root")],
-        recursive: Annotated[bool, Field(description="Required true to delete a non-empty directory")] = False,
+        path: Annotated[
+            str, Field(description="File or folder to delete, relative to root")
+        ],
+        recursive: Annotated[
+            bool, Field(description="Required true to delete a non-empty directory")
+        ] = False,
     ) -> str:
         """Delete a file, or a directory (recursive=true for non-empty). Irreversible.
 
         Returns JSON {"path","deleted"}.
         """
         p = root.resolve(path)
+        if p == root.base:
+            return json.dumps({"error": "Refusing to delete the sandbox root itself."})
         if not p.exists():
             return json.dumps({"error": f"Not found: {path}"})
         if p.is_dir():
             if any(p.iterdir()) and not recursive:
-                return json.dumps({"error": f"Directory not empty: {path}. Pass recursive=true to delete."})
+                return json.dumps({
+                    "error": f"Directory not empty: {path}. Pass recursive=true to delete."
+                })
             shutil.rmtree(p) if recursive else p.rmdir()
         else:
             p.unlink()
