@@ -26,20 +26,35 @@ from typing import Annotated, Optional
 from pydantic import Field
 
 from .. import deps
-from ..config import DEFAULT_FRAMES, DEFAULT_MAX_DIM, MAX_FRAMES, RO
+from ..config import DEFAULT_FRAMES, DEFAULT_MAX_DIM, MAX_FRAMES, RO, clamp_dim
 from ..media import compose
 from ..media.images import image_content
 from ..media.video import duration, extract_frame, ffprobe, norm_format
 from ..sandbox import Root
 
-_FMT = Field(description="Frame encoding: 'png' (lossless) or 'jpeg' (smaller).", pattern="^(png|jpe?g)$")
-_QUALITY = Field(description="JPEG quality 1..100 (higher=better); ignored for png.", ge=1, le=100)
-_OUTPUT = Field(description="'inline' returns image content; 'file' writes it and returns a path.",
-                pattern="^(inline|file)$")
+_FMT = Field(
+    description="Frame encoding: 'png' (lossless) or 'jpeg' (smaller).",
+    pattern="^(png|jpe?g)$",
+)
+_QUALITY = Field(
+    description="JPEG quality 1..100 (higher=better); ignored for png.", ge=1, le=100
+)
+_OUTPUT = Field(
+    description="'inline' returns image content; 'file' writes it and returns a path.",
+    pattern="^(inline|file)$",
+)
 
 
-def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
-    cache_dir = frames_dir if frames_dir is not None else (root.base / ".filebridge_frames")
+def register(
+    mcp,
+    root: Root,
+    *,
+    frames_dir: Optional[Path] = None,
+    max_image_dim: Optional[int] = None,
+) -> None:
+    cache_dir = (
+        frames_dir if frames_dir is not None else (root.base / ".filebridge_frames")
+    )
 
     def _save_frame(data: bytes, src: Path, t: float, fmt: str) -> str:
         """Write a frame under the frames dir; return its path (relative to root)."""
@@ -52,7 +67,9 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
         return root.rel(out)
 
     @mcp.tool(name="video_info", annotations={"title": "Probe video/audio", **RO})
-    def video_info(path: Annotated[str, Field(description="Media file relative to root")]) -> str:
+    def video_info(
+        path: Annotated[str, Field(description="Media file relative to root")],
+    ) -> str:
         """Probe a media file so the model knows the time range it can sample.
 
         Returns JSON: {"path","duration_sec","width","height","fps","codec",
@@ -68,11 +85,22 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
             info = ffprobe(p)
         except RuntimeError as e:
             return json.dumps({"error": str(e)})
-        out = {"path": root.rel(p), "duration_sec": round(duration(p), 3),
-               "width": None, "height": None, "fps": None, "codec": None, "has_audio": False}
+        out = {
+            "path": root.rel(p),
+            "duration_sec": round(duration(p), 3),
+            "width": None,
+            "height": None,
+            "fps": None,
+            "codec": None,
+            "has_audio": False,
+        }
         for s in info.get("streams", []):
             if s.get("codec_type") == "video" and out["codec"] is None:
-                out.update(width=s.get("width"), height=s.get("height"), codec=s.get("codec_name"))
+                out.update(
+                    width=s.get("width"),
+                    height=s.get("height"),
+                    codec=s.get("codec_name"),
+                )
                 rate = s.get("avg_frame_rate", "0/0")
                 try:
                     num, den = rate.split("/")
@@ -83,12 +111,25 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
                 out["has_audio"] = True
         return json.dumps(out, indent=2)
 
-    @mcp.tool(name="video_frame", annotations={"title": "Extract one video frame", **RO})
+    @mcp.tool(
+        name="video_frame", annotations={"title": "Extract one video frame", **RO}
+    )
     def video_frame(
         path: Annotated[str, Field(description="Video file relative to root")],
-        timestamp: Annotated[Optional[float], Field(description="Seek position in seconds.", ge=0)] = None,
-        percent: Annotated[Optional[float], Field(description="Seek to this %% of the duration (e.g. 60 = 60%% mark). Overrides timestamp.", ge=0, le=100)] = None,
-        max_dimension: Annotated[int, Field(description="Cap longest edge of the frame (px)", ge=64, le=4096)] = DEFAULT_MAX_DIM,
+        timestamp: Annotated[
+            Optional[float], Field(description="Seek position in seconds.", ge=0)
+        ] = None,
+        percent: Annotated[
+            Optional[float],
+            Field(
+                description="Seek to this %% of the duration (e.g. 60 = 60%% mark). Overrides timestamp.",
+                ge=0,
+                le=100,
+            ),
+        ] = None,
+        max_dimension: Annotated[
+            int, Field(description="Cap longest edge of the frame (px)", ge=64, le=4096)
+        ] = DEFAULT_MAX_DIM,
         format: Annotated[str, _FMT] = "png",
         quality: Annotated[int, _QUALITY] = 85,
         output: Annotated[str, _OUTPUT] = "inline",
@@ -112,23 +153,56 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
             elif timestamp is not None:
                 t = timestamp
             else:
-                return json.dumps({"error": "Provide timestamp (seconds) or percent (0-100)."})
-            data = extract_frame(p, t, max_dimension, fmt, quality)
+                return json.dumps(
+                    {"error": "Provide timestamp (seconds) or percent (0-100)."}
+                )
+            data = extract_frame(
+                p, t, clamp_dim(max_dimension, max_image_dim), fmt, quality
+            )
         except Exception as e:
             return json.dumps({"error": f"Frame extraction failed: {e}"})
         if output == "file":
-            return json.dumps({"path": root.rel(p), "timestamp_sec": round(t, 3),
-                               "frame_path": _save_frame(data, p, t, fmt), "format": fmt}, indent=2)
-        return image_content(data, fmt, {"path": root.rel(p), "timestamp_sec": round(t, 3)})
+            return json.dumps(
+                {
+                    "path": root.rel(p),
+                    "timestamp_sec": round(t, 3),
+                    "frame_path": _save_frame(data, p, t, fmt),
+                    "format": fmt,
+                },
+                indent=2,
+            )
+        return image_content(
+            data, fmt, {"path": root.rel(p), "timestamp_sec": round(t, 3)}
+        )
 
-    @mcp.tool(name="video_frames", annotations={"title": "Sample frames across a slice", **RO})
+    @mcp.tool(
+        name="video_frames", annotations={"title": "Sample frames across a slice", **RO}
+    )
     def video_frames(
         path: Annotated[str, Field(description="Video file relative to root")],
-        start: Annotated[float, Field(description="Slice start in seconds", ge=0)] = 0.0,
-        end: Annotated[Optional[float], Field(description="Slice end in seconds; omit for end of video")] = None,
-        count: Annotated[int, Field(description="Frames evenly sampled across the slice", ge=1, le=MAX_FRAMES)] = DEFAULT_FRAMES,
-        timestamps: Annotated[Optional[list[float]], Field(description="Explicit seconds to grab (overrides start/end/count).")] = None,
-        max_dimension: Annotated[int, Field(description="Cap longest edge of each frame (px)", ge=64, le=4096)] = DEFAULT_MAX_DIM,
+        start: Annotated[
+            float, Field(description="Slice start in seconds", ge=0)
+        ] = 0.0,
+        end: Annotated[
+            Optional[float],
+            Field(description="Slice end in seconds; omit for end of video"),
+        ] = None,
+        count: Annotated[
+            int,
+            Field(
+                description="Frames evenly sampled across the slice",
+                ge=1,
+                le=MAX_FRAMES,
+            ),
+        ] = DEFAULT_FRAMES,
+        timestamps: Annotated[
+            Optional[list[float]],
+            Field(description="Explicit seconds to grab (overrides start/end/count)."),
+        ] = None,
+        max_dimension: Annotated[
+            int,
+            Field(description="Cap longest edge of each frame (px)", ge=64, le=4096),
+        ] = DEFAULT_MAX_DIM,
         format: Annotated[str, _FMT] = "png",
         quality: Annotated[int, _QUALITY] = 85,
         output: Annotated[str, _OUTPUT] = "inline",
@@ -148,6 +222,7 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
             msg = json.dumps({"error": f"Not a file: {path}"})
             return [msg] if output == "inline" else msg
         fmt = norm_format(format)
+        dim = clamp_dim(max_dimension, max_image_dim)
         try:
             dur = duration(p)
         except RuntimeError as e:
@@ -155,11 +230,17 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
             return [msg] if output == "inline" else msg
 
         if timestamps:
-            stamps = [round(max(0.0, min(float(t), dur)), 3) for t in timestamps[:MAX_FRAMES]]
+            stamps = [
+                round(max(0.0, min(float(t), dur)), 3) for t in timestamps[:MAX_FRAMES]
+            ]
         else:
             hi = dur if end is None else min(end, dur)
             if hi <= start:
-                msg = json.dumps({"error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"})
+                msg = json.dumps(
+                    {
+                        "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
+                    }
+                )
                 return [msg] if output == "inline" else msg
             if count == 1:
                 stamps = [round(start, 3)]
@@ -171,28 +252,67 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
             frames = []
             for t in stamps:
                 try:
-                    frames.append({"timestamp_sec": t, "frame_path": _save_frame(extract_frame(p, t, max_dimension, fmt, quality), p, t, fmt)})
+                    frames.append(
+                        {
+                            "timestamp_sec": t,
+                            "frame_path": _save_frame(
+                                extract_frame(p, t, dim, fmt, quality), p, t, fmt
+                            ),
+                        }
+                    )
                 except Exception as e:
                     frames.append({"timestamp_sec": t, "error": str(e)})
-            return json.dumps({"path": root.rel(p), "format": fmt, "frames": frames}, indent=2)
+            return json.dumps(
+                {"path": root.rel(p), "format": fmt, "frames": frames}, indent=2
+            )
 
         results: list = [json.dumps({"path": root.rel(p), "timestamps_sec": stamps})]
         for i, t in enumerate(stamps):
             try:
-                data = extract_frame(p, t, max_dimension, fmt, quality)
-                results.append(image_content(data, fmt, {"path": root.rel(p), "timestamp_sec": t, "frame_index": i}))
+                data = extract_frame(p, t, dim, fmt, quality)
+                results.append(
+                    image_content(
+                        data,
+                        fmt,
+                        {"path": root.rel(p), "timestamp_sec": t, "frame_index": i},
+                    )
+                )
             except Exception as e:
-                results.append(json.dumps({"error": f"frame at {t}s failed: {e}", "frame_index": i, "timestamp_sec": t}))
+                results.append(
+                    json.dumps(
+                        {
+                            "error": f"frame at {t}s failed: {e}",
+                            "frame_index": i,
+                            "timestamp_sec": t,
+                        }
+                    )
+                )
         return results
 
-    @mcp.tool(name="video_contact_sheet", annotations={"title": "Tile frames into one image", **RO})
+    @mcp.tool(
+        name="video_contact_sheet",
+        annotations={"title": "Tile frames into one image", **RO},
+    )
     def video_contact_sheet(
         path: Annotated[str, Field(description="Video file relative to root")],
-        count: Annotated[int, Field(description="Frames to tile across the slice", ge=1, le=MAX_FRAMES)] = 12,
+        count: Annotated[
+            int,
+            Field(description="Frames to tile across the slice", ge=1, le=MAX_FRAMES),
+        ] = 12,
         cols: Annotated[int, Field(description="Grid columns", ge=1, le=12)] = 4,
-        start: Annotated[float, Field(description="Slice start in seconds", ge=0)] = 0.0,
-        end: Annotated[Optional[float], Field(description="Slice end in seconds; omit for end of video")] = None,
-        max_dimension: Annotated[int, Field(description="Cap longest edge of the whole sheet (px)", ge=64, le=4096)] = DEFAULT_MAX_DIM,
+        start: Annotated[
+            float, Field(description="Slice start in seconds", ge=0)
+        ] = 0.0,
+        end: Annotated[
+            Optional[float],
+            Field(description="Slice end in seconds; omit for end of video"),
+        ] = None,
+        max_dimension: Annotated[
+            int,
+            Field(
+                description="Cap longest edge of the whole sheet (px)", ge=64, le=4096
+            ),
+        ] = DEFAULT_MAX_DIM,
         format: Annotated[str, _FMT] = "jpeg",
         quality: Annotated[int, _QUALITY] = 85,
         output: Annotated[str, _OUTPUT] = "inline",
@@ -207,44 +327,74 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
         if err:
             return json.dumps({"error": err})
         if not compose.available():
-            return json.dumps({"error": "Contact sheet needs Pillow. Run: pip install pillow"})
+            return json.dumps(
+                {"error": "Contact sheet needs Pillow. Run: pip install pillow"}
+            )
         p = root.resolve(path)
         if not p.is_file():
             return json.dumps({"error": f"Not a file: {path}"})
         fmt = norm_format(format)
+        dim = clamp_dim(max_dimension, max_image_dim)
         try:
             dur = duration(p)
         except RuntimeError as e:
             return json.dumps({"error": str(e)})
         hi = dur if end is None else min(end, dur)
         if hi <= start:
-            return json.dumps({"error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"})
+            return json.dumps(
+                {
+                    "error": f"Empty slice: start={start}, end={hi}, duration={round(dur, 3)}"
+                }
+            )
         if count == 1:
             stamps = [round(start, 3)]
         else:
             step = (hi - start) / (count - 1)
             stamps = [round(start + i * step, 3) for i in range(count)]
 
-        tile_w = max(64, max_dimension // max(1, cols))
+        tile_w = max(64, dim // max(1, cols))
         tiles = []
         for t in stamps:
             try:
-                tiles.append((f"{t:.2f}s", extract_frame(p, t, tile_w, "png")))  # png tiles for clean compositing
+                tiles.append(
+                    (f"{t:.2f}s", extract_frame(p, t, tile_w, "png"))
+                )  # png tiles for clean compositing
             except Exception:
                 continue
         if not tiles:
-            return json.dumps({"error": "No frames could be extracted for the contact sheet."})
+            return json.dumps(
+                {"error": "No frames could be extracted for the contact sheet."}
+            )
         try:
-            sheet = compose.contact_sheet(tiles, cols, max_dimension, fmt, quality)
+            sheet = compose.contact_sheet(tiles, cols, dim, fmt, quality)
         except RuntimeError as e:
             return json.dumps({"error": str(e)})
 
         if output == "file":
             stem = root.rel(p).replace("/", "_").rsplit(".", 1)[0]
             cache_dir.mkdir(parents=True, exist_ok=True)
-            out = cache_dir / f"{stem}_sheet_{len(tiles)}.{ 'jpg' if fmt == 'jpeg' else 'png' }"
+            out = (
+                cache_dir
+                / f"{stem}_sheet_{len(tiles)}.{'jpg' if fmt == 'jpeg' else 'png'}"
+            )
             out.write_bytes(sheet)
-            return json.dumps({"path": root.rel(p), "frame_count": len(tiles), "cols": cols,
-                               "sheet_path": root.rel(out), "format": fmt}, indent=2)
-        return image_content(sheet, fmt, {"path": root.rel(p), "kind": "contact_sheet",
-                                          "frame_count": len(tiles), "cols": cols})
+            return json.dumps(
+                {
+                    "path": root.rel(p),
+                    "frame_count": len(tiles),
+                    "cols": cols,
+                    "sheet_path": root.rel(out),
+                    "format": fmt,
+                },
+                indent=2,
+            )
+        return image_content(
+            sheet,
+            fmt,
+            {
+                "path": root.rel(p),
+                "kind": "contact_sheet",
+                "frame_count": len(tiles),
+                "cols": cols,
+            },
+        )

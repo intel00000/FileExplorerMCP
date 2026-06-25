@@ -117,6 +117,24 @@ def test_build_server_sets_http_path(tmp_path):
     assert build_server(Root(tmp_path)).settings.streamable_http_path == "/mcp"
 
 
+def test_max_image_dimension_ceiling_clamps_read(tmp_path):
+    PILImage = pytest.importorskip("PIL.Image")
+    import io
+
+    PILImage.new("RGB", (2000, 1000), (5, 5, 5)).save(
+        tmp_path / "big.png", format="PNG"
+    )
+    mcp = build_server(Root(tmp_path), max_image_dim=256)
+    blocks = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": "big.png"})))
+    img = next(b for b in blocks if b.type == "image")
+    import base64
+
+    decoded = PILImage.open(io.BytesIO(base64.b64decode(img.data)))
+    assert (
+        max(decoded.size) <= 256
+    )  # ceiling beat the 1024 default and the source's 2000px
+
+
 def test_no_auth_by_default(tmp_path):
     assert build_server(Root(tmp_path)).settings.auth is None
 

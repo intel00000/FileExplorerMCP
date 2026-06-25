@@ -37,6 +37,7 @@ def build_server(
     port: int = 8000,
     http_path: str = "/mcp",
     auth_token: "str | None" = None,
+    max_image_dim: "int | None" = None,
 ) -> FastMCP:
     """Create a FastMCP server with the tool catalog bound to `root`.
 
@@ -45,7 +46,8 @@ def build_server(
     file-output mode writes frames (default ``<root>/.filebridge_frames``).
     `host`/`port`/`http_path` configure the HTTP bind and endpoint path;
     `auth_token`, if given, requires that shared-secret bearer token on every
-    HTTP request (HTTP transport only).
+    HTTP request (HTTP transport only). `max_image_dim` caps every image/frame's
+    longest edge server-side, overriding larger per-call requests.
     """
     auth_kwargs: dict = {}
     if auth_token:
@@ -65,6 +67,7 @@ def build_server(
         allow_write=allow_write,
         allow_delete=allow_delete,
         frames_dir=frames_dir,
+        max_image_dim=max_image_dim,
     )
     return mcp
 
@@ -122,6 +125,16 @@ def main() -> None:
         help="Where video output='file' mode writes frames "
         "(default <root>/.filebridge_frames). This is the only path the "
         "read-only server writes to.",
+    )
+    ap.add_argument(
+        "--max-image-dimension",
+        type=int,
+        default=None,
+        metavar="PX",
+        help="Server-side ceiling on the longest edge of every returned image/frame "
+        "(px). Clamps each tool's max_dimension, overriding larger per-call requests "
+        "— useful for capping vision-token / VRAM cost. Default: no extra cap (per-call, "
+        "up to 4096).",
     )
     ap.add_argument(
         "--http", action="store_true", help="Use streamable HTTP instead of stdio."
@@ -185,6 +198,7 @@ def main() -> None:
         port=args.port,
         http_path=args.http_path,
         auth_token=auth_token,
+        max_image_dim=args.max_image_dimension,
     )
 
     enabled = ["read-only core"]

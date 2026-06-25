@@ -5,7 +5,18 @@ Imports only filebridge_mcp.detect / .config — no MCP SDK required.
 
 from __future__ import annotations
 
+from filebridge_mcp.config import clamp_dim
 from filebridge_mcp.detect import detect_kind, hexdump, looks_text
+
+
+def test_clamp_dim():
+    # no ceiling -> request stands
+    assert clamp_dim(1024, None) == 1024
+    assert clamp_dim(4096, 0) == 4096  # 0 is falsy -> treated as "no ceiling"
+    # ceiling lowers, never raises
+    assert clamp_dim(1024, 512) == 512
+    assert clamp_dim(256, 512) == 256
+
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 JPEG_MAGIC = b"\xff\xd8\xff\xe0" + b"\x00" * 16

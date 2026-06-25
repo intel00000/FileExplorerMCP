@@ -20,4 +20,5 @@ __all__ = ["Root", "main", "__version__"]
 def main() -> None:
     """Lazy entrypoint — defers the MCP SDK import to call time."""
     from .server import main as _main
+
     _main()

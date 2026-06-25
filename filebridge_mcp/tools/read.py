@@ -14,20 +14,52 @@ from typing import Annotated
 from pydantic import Field
 
 from .. import deps
-from ..config import DEFAULT_LINES, DEFAULT_MAX_DIM, HEXDUMP_BYTES, MAX_LINES, RO
+from ..config import (
+    DEFAULT_LINES,
+    DEFAULT_MAX_DIM,
+    HEXDUMP_BYTES,
+    MAX_LINES,
+    RO,
+    clamp_dim,
+)
 from ..detect import detect_kind, hexdump
 from ..media.images import downscaled_image, image_content
 from ..sandbox import Root
 
 
-def register(mcp, root: Root) -> None:
+def register(mcp, root: Root, *, max_image_dim: "int | None" = None) -> None:
     @mcp.tool(name="read_file", annotations={"title": "Read file content", **RO})
     def read_file(
         path: Annotated[str, Field(description="File relative to root")],
-        offset: Annotated[int, Field(description="Start of slice. Lines for text, page number for PDF (1-indexed).", ge=1)] = 1,
-        limit: Annotated[int, Field(description="Slice size: number of lines (text) or pages (PDF) to return.", ge=1, le=MAX_LINES)] = DEFAULT_LINES,
-        max_dimension: Annotated[int, Field(description="Cap longest edge for image/PDF-render output (px).", ge=64, le=4096)] = DEFAULT_MAX_DIM,
-        render_page: Annotated[bool, Field(description="For PDFs: return the page at `offset` as an image instead of text.")] = False,
+        offset: Annotated[
+            int,
+            Field(
+                description="Start of slice. Lines for text, page number for PDF (1-indexed).",
+                ge=1,
+            ),
+        ] = 1,
+        limit: Annotated[
+            int,
+            Field(
+                description="Slice size: number of lines (text) or pages (PDF) to return.",
+                ge=1,
+                le=MAX_LINES,
+            ),
+        ] = DEFAULT_LINES,
+        max_dimension: Annotated[
+            int,
+            Field(
+                description="Cap longest edge for image/PDF-render output (px).",
+                ge=64,
+                le=4096,
+            ),
+        ] = DEFAULT_MAX_DIM,
+        render_page: Annotated[
+            bool,
+            Field(
+                description="For PDFs: return the page at `offset` as an image instead of text."
+            ),
+        ] = False,
     ):
         """Read one file, projecting it into text or image based on detected type.
 
@@ -60,22 +92,34 @@ def register(mcp, root: Root) -> None:
                         window.append(line)
                     total_lines = i + 1
             nxt = offset + len(window)
-            return json.dumps({
-                "path": root.rel(p), "kind": "text", "total_lines": total_lines,
-                "offset": offset, "returned_lines": len(window),
-                "next_offset": nxt if nxt <= total_lines else None,
-                "content": "".join(window),
-            }, indent=2)
+            return json.dumps(
+                {
+                    "path": root.rel(p),
+                    "kind": "text",
+                    "total_lines": total_lines,
+                    "offset": offset,
+                    "returned_lines": len(window),
+                    "next_offset": nxt if nxt <= total_lines else None,
+                    "content": "".join(window),
+                },
+                indent=2,
+            )
+
+        dim = clamp_dim(max_dimension, max_image_dim)
 
         if kind == "image":
             try:
                 # Convert to ImageContent (preserves mime for png/jpeg/gif/webp/bmp/tiff)
                 # and stamp _meta so the host can identify the image, like the video tools.
-                ic = downscaled_image(p, max_dimension).to_image_content()
+                ic = downscaled_image(p, dim).to_image_content()
                 ic.meta = {"path": root.rel(p), "kind": "image"}
                 return ic
-            except Exception as e:  # corrupt/truncated/unsupported image — report, don't crash
-                return json.dumps({"error": f"Could not open image '{root.rel(p)}': {e}"})
+            except (
+                Exception
+            ) as e:  # corrupt/truncated/unsupported image — report, don't crash
+                return json.dumps(
+                    {"error": f"Could not open image '{root.rel(p)}': {e}"}
+                )
 
         if kind == "pdf":
             if not deps.HAVE_FITZ:
@@ -85,46 +129,87 @@ def register(mcp, root: Root) -> None:
                 n = doc.page_count
                 if render_page:
                     if offset > n:
-                        return json.dumps({"error": f"PDF has {n} pages; offset {offset} out of range"})
+                        return json.dumps(
+                            {
+                                "error": f"PDF has {n} pages; offset {offset} out of range"
+                            }
+                        )
                     page = doc.load_page(offset - 1)
-                    zoom = max_dimension / max(page.rect.width, page.rect.height)
+                    zoom = dim / max(page.rect.width, page.rect.height)
                     pix = page.get_pixmap(matrix=deps.fitz.Matrix(zoom, zoom))
-                    return image_content(pix.tobytes("png"), "png",
-                                         {"path": root.rel(p), "kind": "pdf_page", "page": offset})
+                    return image_content(
+                        pix.tobytes("png"),
+                        "png",
+                        {"path": root.rel(p), "kind": "pdf_page", "page": offset},
+                    )
                 texts = []
                 for i in range(offset - 1, min(offset - 1 + limit, n)):
                     texts.append(f"--- page {i + 1} ---\n{doc.load_page(i).get_text()}")
                 nxt = offset + limit
-                return json.dumps({
-                    "path": root.rel(p), "kind": "pdf", "total_pages": n, "offset": offset,
-                    "next_offset": nxt if nxt <= n else None, "content": "\n".join(texts),
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "path": root.rel(p),
+                        "kind": "pdf",
+                        "total_pages": n,
+                        "offset": offset,
+                        "next_offset": nxt if nxt <= n else None,
+                        "content": "\n".join(texts),
+                    },
+                    indent=2,
+                )
             except Exception as e:  # damaged/encrypted PDF — report, don't crash
                 return json.dumps({"error": f"Could not read PDF '{root.rel(p)}': {e}"})
 
         if kind == "office":
-            return json.dumps({"path": root.rel(p), "kind": "office", "mime": mime,
-                               "note": "Office extraction is an extension point (use python-docx/"
-                                       "python-pptx/openpyxl). Not implemented in this skeleton."})
+            return json.dumps(
+                {
+                    "path": root.rel(p),
+                    "kind": "office",
+                    "mime": mime,
+                    "note": "Office extraction is an extension point (use python-docx/"
+                    "python-pptx/openpyxl). Not implemented in this skeleton.",
+                }
+            )
         if kind == "archive":
-            return json.dumps({"path": root.rel(p), "kind": "archive",
-                               "note": "Archive listing is an extension point. Inspect entries before extracting."})
+            return json.dumps(
+                {
+                    "path": root.rel(p),
+                    "kind": "archive",
+                    "note": "Archive listing is an extension point. Inspect entries before extracting.",
+                }
+            )
         if kind in ("video", "audio"):
-            return json.dumps({"path": root.rel(p), "kind": kind, "mime": mime,
-                               "note": "Use stat for metadata and video_frame/video_frames to view footage; "
-                                       "raw media bytes are not returned."})
+            return json.dumps(
+                {
+                    "path": root.rel(p),
+                    "kind": kind,
+                    "mime": mime,
+                    "note": "Use stat for metadata and video_frame/video_frames to view footage; "
+                    "raw media bytes are not returned.",
+                }
+            )
 
         with p.open("rb") as fh:
             data = fh.read(HEXDUMP_BYTES)
-        return json.dumps({"path": root.rel(p), "kind": "binary", "mime": mime,
-                           "size": p.stat().st_size, "shown_bytes": len(data),
-                           "hexdump": hexdump(data)}, indent=2)
+        return json.dumps(
+            {
+                "path": root.rel(p),
+                "kind": "binary",
+                "mime": mime,
+                "size": p.stat().st_size,
+                "shown_bytes": len(data),
+                "hexdump": hexdump(data),
+            },
+            indent=2,
+        )
 
     @mcp.tool(name="read_bytes", annotations={"title": "Read a byte slice", **RO})
     def read_bytes(
         path: Annotated[str, Field(description="File relative to root")],
         offset: Annotated[int, Field(description="Byte offset to start at", ge=0)] = 0,
-        length: Annotated[int, Field(description="Number of bytes to read", ge=1, le=4096)] = HEXDUMP_BYTES,
+        length: Annotated[
+            int, Field(description="Number of bytes to read", ge=1, le=4096)
+        ] = HEXDUMP_BYTES,
     ) -> str:
         """Hexdump an arbitrary byte slice of any file — for inspecting binary formats.
 
@@ -137,5 +222,13 @@ def register(mcp, root: Root) -> None:
         with p.open("rb") as f:
             f.seek(offset)
             data = f.read(length)
-        return json.dumps({"path": root.rel(p), "offset": offset, "length": len(data),
-                           "total_size": size, "hexdump": hexdump(data)}, indent=2)
+        return json.dumps(
+            {
+                "path": root.rel(p),
+                "offset": offset,
+                "length": len(data),
+                "total_size": size,
+                "hexdump": hexdump(data),
+            },
+            indent=2,
+        )
