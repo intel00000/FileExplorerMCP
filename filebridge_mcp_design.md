@@ -92,7 +92,7 @@ stdio is the default (the standard local-MCP transport; how hosts launch the ser
 
 **Slice semantics.** `offset`/`limit` are *generic pagination* whose unit depends on file kind: **lines** for text, **pages** for PDF. Text and PDF responses include a `next_offset` (null when exhausted) so the model can page forward. Byte-level slicing of arbitrary files is a separate tool (`read_bytes`). Video slicing is by **time** (`video_frames`).
 
-**Bounds.** Every potentially large result is capped, with the cap exposed as a parameter and a `truncated`/`next_offset` signal in the response. Defaults: text 400 lines (max 5000), directory 500 entries (max 2000), glob 500 paths, grep 200 matches, frames 8 (max 64), image/frame longest edge 1024 px (max 4096).
+**Bounds.** Every potentially large result is capped, with the cap exposed as a parameter and a `truncated`/`next_offset` signal in the response. Defaults: text 400 lines (max 5000), directory 500 entries (max 2000), glob 500 paths, grep 200 matches, frames 8 (max 64). Image/frame longest edge is **uncapped by default** (native resolution); the effective cap is the smaller of the per-call `max_dimension` (≤ 8192) and the operator's `--max-image-dimension`, or none if neither is set.
 
 ### 5.2 Type detection
 
@@ -123,8 +123,8 @@ Cheap metadata for one path; call before `read_file` to size up a file. Returns 
 
 #### Read
 
-**`read_file(path, offset=1, limit=400, max_dimension=1024, render_page=false)`** — RO
-The type-dispatched reader (see §5.2 mapping). For text, returns `{path, kind:"text", total_lines, offset, returned_lines, next_offset, content}`. For images, returns the (downscaled) image. For PDFs, returns page-range text with `next_offset`, or — with `render_page=true` — the single page at `offset` rasterized to an image. For video/audio/office/archive/binary, returns the channel-appropriate result from the mapping table. `offset`/`limit` are lines for text and pages for PDF; `max_dimension` caps image/render output; `render_page` applies only to PDFs.
+**`read_file(path, offset=1, limit=400, max_dimension=null, render_page=false)`** — RO
+The type-dispatched reader (see §5.2 mapping). For text, returns `{path, kind:"text", total_lines, offset, returned_lines, next_offset, content}`. For images, returns the (downscaled) image. For PDFs, returns page-range text with `next_offset`, or — with `render_page=true` — the single page at `offset` rasterized to an image. For video/audio/office/archive/binary, returns the channel-appropriate result from the mapping table. `offset`/`limit` are lines for text and pages for PDF; `max_dimension` optionally caps image/render output (omit for native resolution — see §5.1 Bounds); `render_page` applies only to PDFs.
 
 **`read_bytes(path, offset=0, length=256)`** — RO
 Hexdump an arbitrary byte slice of any file, for inspecting binary formats. `length` ≤ 4096. Returns `{path, offset, length, total_size, hexdump}`.
@@ -156,16 +156,16 @@ Delete a file, or a directory (`recursive=true` required for a non-empty directo
 **`video_info(path)`** — RO
 Probe a media file so the model knows the time range it can sample. Returns `{path, duration_sec, width, height, fps, codec, has_audio}`. Call before `video_frames` to pick sensible timestamps.
 
-**`video_frame(path, timestamp=null, percent=null, max_dimension=1024, format="png", quality=85, output="inline")`** — RO
+**`video_frame(path, timestamp=null, percent=null, max_dimension=null, format="png", quality=85, output="inline")`** — RO
 Return a single frame as an image. Seek by absolute `timestamp` (seconds) **or** by `percent` of the duration (e.g. `percent=60` → the 60% mark; overrides `timestamp`). Intended for **agentic seeking** — narrow toward a moment by repeated calls (e.g. binary-searching for a title card). Returns an image (`output="inline"`), a JSON `{frame_path}` (`output="file"`), or a JSON error.
 
-**`video_frames(path, start=0, end=null, count=8, timestamps=null, max_dimension=1024, format="png", quality=85, output="inline")`** — RO
+**`video_frames(path, start=0, end=null, count=8, timestamps=null, max_dimension=null, format="png", quality=85, output="inline")`** — RO
 The **slice / set** view: either evenly sample `count` frames (≤ 64) across `[start, end]`, or grab an explicit `timestamps=[…]` list (overrides the slice). Ordered. With `output="inline"` the first list element is a JSON summary of the timestamps and the rest are images; with `output="file"` a single JSON object lists each frame's saved path. Every inline frame is encoded by the vision model in full, so keep `count` modest.
 
-**`video_contact_sheet(path, count=12, cols=4, start=0, end=null, max_dimension=1024, format="jpeg", quality=85, output="inline")`** — RO
+**`video_contact_sheet(path, count=12, cols=4, start=0, end=null, max_dimension=null, format="jpeg", quality=85, output="inline")`** — RO
 Tile `count` evenly-spaced, timestamp-labeled frames into **one** composite image (`cols` wide). A single image costs far fewer vision tokens than `count` separate frames — ideal for a first-pass overview before zooming in with `video_frame`. Requires Pillow. Returns an image, or a saved sheet path with `output="file"`.
 
-**Shared frame options.** `format` is `png` (lossless) or `jpeg` (much smaller; `quality` 1–100). `output="file"` materializes frames under the frames dir (`<root>/.filebridge_frames`, override with `--frames-dir`) and returns *paths* instead of base64 — this is the §9 mtmd fallback, exposed as a per-call option. It is the only write the read-only server performs.
+**Shared frame options.** `max_dimension` optionally caps the frame's longest edge (omit for native; effective cap = smaller of this and `--max-image-dimension`, or none — §5.1). `format` is `png` (lossless) or `jpeg` (much smaller; `quality` 1–100). `output="file"` materializes frames under the frames dir (`<root>/.filebridge_frames`, override with `--frames-dir`) and returns *paths* instead of base64 — this is the §9 mtmd fallback, exposed as a per-call option. It is the only write the read-only server performs.
 
 ### 5.4 Frame extraction mechanics
 

@@ -9,25 +9,25 @@ file, so a multi-GB log costs `limit` lines of memory, not the file's size.
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Optional
 
 from pydantic import Field
 
 from .. import deps
 from ..config import (
     DEFAULT_LINES,
-    DEFAULT_MAX_DIM,
     HEXDUMP_BYTES,
     MAX_LINES,
+    PDF_RENDER_DIM,
     RO,
-    clamp_dim,
+    resolve_dim,
 )
 from ..detect import detect_kind, hexdump
 from ..media.images import downscaled_image, image_content
 from ..sandbox import Root
 
 
-def register(mcp, root: Root, *, max_image_dim: "int | None" = None) -> None:
+def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
     @mcp.tool(name="read_file", annotations={"title": "Read file content", **RO})
     def read_file(
         path: Annotated[str, Field(description="File relative to root")],
@@ -47,13 +47,15 @@ def register(mcp, root: Root, *, max_image_dim: "int | None" = None) -> None:
             ),
         ] = DEFAULT_LINES,
         max_dimension: Annotated[
-            int,
+            Optional[int],
             Field(
-                description="Cap longest edge for image/PDF-render output (px).",
+                description="Cap the longest edge of image/PDF-render output (px). Omit "
+                "for no cap (native size). The effective cap is the smaller of this and "
+                "any server-set --max-image-dimension.",
                 ge=64,
-                le=4096,
+                le=8192,
             ),
-        ] = DEFAULT_MAX_DIM,
+        ] = None,
         render_page: Annotated[
             bool,
             Field(
@@ -105,7 +107,7 @@ def register(mcp, root: Root, *, max_image_dim: "int | None" = None) -> None:
                 indent=2,
             )
 
-        dim = clamp_dim(max_dimension, max_image_dim)
+        dim = resolve_dim(max_dimension, max_image_dim)
 
         if kind == "image":
             try:
@@ -135,7 +137,10 @@ def register(mcp, root: Root, *, max_image_dim: "int | None" = None) -> None:
                             }
                         )
                     page = doc.load_page(offset - 1)
-                    zoom = dim / max(page.rect.width, page.rect.height)
+                    # A vector page has no native pixel size, so an uncapped (None)
+                    # request falls back to a sane render resolution.
+                    render_dim = dim if dim is not None else PDF_RENDER_DIM
+                    zoom = render_dim / max(page.rect.width, page.rect.height)
                     pix = page.get_pixmap(matrix=deps.fitz.Matrix(zoom, zoom))
                     return image_content(
                         pix.tobytes("png"),

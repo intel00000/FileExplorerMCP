@@ -26,7 +26,7 @@ from typing import Annotated, Optional
 from pydantic import Field
 
 from .. import deps
-from ..config import DEFAULT_FRAMES, DEFAULT_MAX_DIM, MAX_FRAMES, RO, clamp_dim
+from ..config import DEFAULT_FRAMES, MAX_FRAMES, PDF_RENDER_DIM, RO, resolve_dim
 from ..media import compose
 from ..media.images import image_content
 from ..media.video import duration, extract_frame, ffprobe, norm_format
@@ -42,6 +42,12 @@ _QUALITY = Field(
 _OUTPUT = Field(
     description="'inline' returns image content; 'file' writes it and returns a path.",
     pattern="^(inline|file)$",
+)
+_MAXDIM = Field(
+    description="Cap the longest edge of the frame (px). Omit for no cap (native size). "
+    "The effective cap is the smaller of this and any server-set --max-image-dimension.",
+    ge=64,
+    le=8192,
 )
 
 
@@ -127,9 +133,7 @@ def register(
                 le=100,
             ),
         ] = None,
-        max_dimension: Annotated[
-            int, Field(description="Cap longest edge of the frame (px)", ge=64, le=4096)
-        ] = DEFAULT_MAX_DIM,
+        max_dimension: Annotated[Optional[int], _MAXDIM] = None,
         format: Annotated[str, _FMT] = "png",
         quality: Annotated[int, _QUALITY] = 85,
         output: Annotated[str, _OUTPUT] = "inline",
@@ -157,7 +161,7 @@ def register(
                     {"error": "Provide timestamp (seconds) or percent (0-100)."}
                 )
             data = extract_frame(
-                p, t, clamp_dim(max_dimension, max_image_dim), fmt, quality
+                p, t, resolve_dim(max_dimension, max_image_dim), fmt, quality
             )
         except Exception as e:
             return json.dumps({"error": f"Frame extraction failed: {e}"})
@@ -199,10 +203,7 @@ def register(
             Optional[list[float]],
             Field(description="Explicit seconds to grab (overrides start/end/count)."),
         ] = None,
-        max_dimension: Annotated[
-            int,
-            Field(description="Cap longest edge of each frame (px)", ge=64, le=4096),
-        ] = DEFAULT_MAX_DIM,
+        max_dimension: Annotated[Optional[int], _MAXDIM] = None,
         format: Annotated[str, _FMT] = "png",
         quality: Annotated[int, _QUALITY] = 85,
         output: Annotated[str, _OUTPUT] = "inline",
@@ -222,7 +223,7 @@ def register(
             msg = json.dumps({"error": f"Not a file: {path}"})
             return [msg] if output == "inline" else msg
         fmt = norm_format(format)
-        dim = clamp_dim(max_dimension, max_image_dim)
+        dim = resolve_dim(max_dimension, max_image_dim)
         try:
             dur = duration(p)
         except RuntimeError as e:
@@ -307,12 +308,7 @@ def register(
             Optional[float],
             Field(description="Slice end in seconds; omit for end of video"),
         ] = None,
-        max_dimension: Annotated[
-            int,
-            Field(
-                description="Cap longest edge of the whole sheet (px)", ge=64, le=4096
-            ),
-        ] = DEFAULT_MAX_DIM,
+        max_dimension: Annotated[Optional[int], _MAXDIM] = None,
         format: Annotated[str, _FMT] = "jpeg",
         quality: Annotated[int, _QUALITY] = 85,
         output: Annotated[str, _OUTPUT] = "inline",
@@ -334,7 +330,9 @@ def register(
         if not p.is_file():
             return json.dumps({"error": f"Not a file: {path}"})
         fmt = norm_format(format)
-        dim = clamp_dim(max_dimension, max_image_dim)
+        # A contact sheet must have a bounded overall size, so an uncapped (None)
+        # request falls back to a sane composite size rather than tiling native frames.
+        dim = resolve_dim(max_dimension, max_image_dim) or PDF_RENDER_DIM
         try:
             dur = duration(p)
         except RuntimeError as e:

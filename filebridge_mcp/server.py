@@ -46,8 +46,10 @@ def build_server(
     file-output mode writes frames (default ``<root>/.filebridge_frames``).
     `host`/`port`/`http_path` configure the HTTP bind and endpoint path;
     `auth_token`, if given, requires that shared-secret bearer token on every
-    HTTP request (HTTP transport only). `max_image_dim` caps every image/frame's
-    longest edge server-side, overriding larger per-call requests.
+    HTTP request (HTTP transport only). `max_image_dim`, if set, caps every
+    image/frame's longest edge server-side (overriding larger per-call requests);
+    unset means no server cap — the per-call `max_dimension` alone decides, and
+    omitting both returns native resolution.
     """
     auth_kwargs: dict = {}
     if auth_token:
@@ -131,10 +133,11 @@ def main() -> None:
         type=int,
         default=None,
         metavar="PX",
-        help="Server-side ceiling on the longest edge of every returned image/frame "
-        "(px). Clamps each tool's max_dimension, overriding larger per-call requests "
-        "— useful for capping vision-token / VRAM cost. Default: no extra cap (per-call, "
-        "up to 4096).",
+        help="Cap the longest edge of every returned image/frame (px), overriding any "
+        "larger per-call request — useful for bounding vision-token / VRAM cost. "
+        "Default: unset, meaning no server cap. The effective cap on each image is the "
+        "smaller of this and the model's own max_dimension; if neither is set, images "
+        "are returned at native resolution.",
     )
     ap.add_argument(
         "--http", action="store_true", help="Use streamable HTTP instead of stdio."

@@ -58,13 +58,14 @@ def test_allow_both_registers_full_catalog(tmp_path):
 
 
 def test_corrupt_image_returns_error_not_crash(tmp_path):
-    # Detecting corruption requires Pillow to attempt a decode; without it the
-    # server can only pass the (corrupt) bytes through, so there is no error to assert.
+    # Corruption is only detectable when Pillow actually decodes — i.e. when a cap is
+    # active (downscale path). With no cap the file is passed through by path without
+    # decoding, so there's nothing to detect. Use a cap here to exercise the decode path.
     pytest.importorskip("PIL")
     # Valid PNG magic bytes but no real image data — Pillow cannot decode it.
     bad = tmp_path / "broken.png"
     bad.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
-    mcp = build_server(Root(tmp_path))
+    mcp = build_server(Root(tmp_path), max_image_dim=512)
     content = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": "broken.png"})))
     payload = json.loads(content[0].text)
     assert "error" in payload
@@ -117,22 +118,55 @@ def test_build_server_sets_http_path(tmp_path):
     assert build_server(Root(tmp_path)).settings.streamable_http_path == "/mcp"
 
 
-def test_max_image_dimension_ceiling_clamps_read(tmp_path):
-    PILImage = pytest.importorskip("PIL.Image")
+def _read_image_size(mcp, name):
+    import base64
     import io
+
+    from PIL import Image as PILImage
+
+    blocks = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": name})))
+    img = next(b for b in blocks if b.type == "image")
+    return PILImage.open(io.BytesIO(base64.b64decode(img.data))).size
+
+
+def _big_png(tmp_path):
+    from PIL import Image as PILImage
 
     PILImage.new("RGB", (2000, 1000), (5, 5, 5)).save(
         tmp_path / "big.png", format="PNG"
     )
-    mcp = build_server(Root(tmp_path), max_image_dim=256)
-    blocks = _blocks(asyncio.run(mcp.call_tool("read_file", {"path": "big.png"})))
-    img = next(b for b in blocks if b.type == "image")
-    import base64
 
-    decoded = PILImage.open(io.BytesIO(base64.b64decode(img.data)))
-    assert (
-        max(decoded.size) <= 256
-    )  # ceiling beat the 1024 default and the source's 2000px
+
+def test_no_cap_returns_native_resolution(tmp_path):
+    pytest.importorskip("PIL.Image")
+    _big_png(tmp_path)
+    mcp = build_server(Root(tmp_path))  # no CLI cap; model omits max_dimension
+    assert _read_image_size(mcp, "big.png") == (2000, 1000)  # native, uncapped
+
+
+def test_model_cap_only(tmp_path):
+    pytest.importorskip("PIL.Image")
+    _big_png(tmp_path)
+    mcp = build_server(Root(tmp_path))  # no CLI cap
+    import base64
+    import io
+
+    from PIL import Image as PILImage
+
+    blocks = _blocks(
+        asyncio.run(
+            mcp.call_tool("read_file", {"path": "big.png", "max_dimension": 128})
+        )
+    )
+    img = next(b for b in blocks if b.type == "image")
+    assert max(PILImage.open(io.BytesIO(base64.b64decode(img.data))).size) <= 128
+
+
+def test_cli_cap_overrides_native(tmp_path):
+    pytest.importorskip("PIL.Image")
+    _big_png(tmp_path)
+    mcp = build_server(Root(tmp_path), max_image_dim=256)  # CLI cap, model omits
+    assert max(_read_image_size(mcp, "big.png")) <= 256
 
 
 def test_no_auth_by_default(tmp_path):

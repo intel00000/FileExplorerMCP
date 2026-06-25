@@ -152,30 +152,35 @@ folder.
 
 ### Image resolution & size
 
-Two knobs govern how big a returned image is:
+The longest edge of a returned image is governed by **two optional caps**, and the
+**effective cap is the smaller of whichever are set — or none at all**:
 
-- **`max_dimension`** (per call, on every image-returning tool) — caps the **longest
-  edge in pixels** (default 1024, range `64–4096`). This is the lever that sets the
-  vision-token / patch count and the encode/VRAM cost. *How it's enforced differs by
-  kind:* still images downscale via Pillow's `thumbnail` (shrink-only, aspect
-  preserved); a rendered PDF page is rasterized at a zoom of `max_dimension / longest
-  page edge` (so it can up- or down-scale); video frames are scaled by ffmpeg
-  (`scale='min(max_dimension,iw)':-2`, which caps **width** and keeps aspect); the
-  contact sheet caps the whole composite. Without Pillow, still images are returned at
-  native resolution (`max_dimension` ignored).
-- **`format` / `quality`** (video tools) — `png` vs `jpeg` + quality, controlling the
-  encoded **byte** size. (`read_file` images are always PNG.)
+| model passes `max_dimension`? | `--max-image-dimension` set? | effective cap |
+|---|---|---|
+| no | no | **none → native resolution** |
+| yes | no | the model's value |
+| no | yes | the CLI value |
+| yes | yes | **`min`** of the two |
 
-**Operator ceiling — `--max-image-dimension PX`:** clamps `max_dimension` on every
-tool server-side, overriding any larger per-call request. Use it to bound
-vision-token / VRAM cost regardless of what the model asks for:
+- **`max_dimension`** (per call, on every image-returning tool, range `64–8192`) — the
+  model's cap. Omit for none.
+- **`--max-image-dimension PX`** (operator) — a server-side cap that overrides any
+  larger per-call request; unset means no server cap. Use it to bound vision-token /
+  VRAM cost regardless of what the model asks:
 
 ```bash
 uv run filebridge-mcp --root /path --max-image-dimension 512   # nothing exceeds 512px, ever
 ```
 
-It only ever *lowers* the effective cap; the per-call default (1024) and ceiling
-(4096) still apply when it's unset.
+*How a cap is enforced differs by kind:* still images downscale via Pillow's
+`thumbnail` (shrink-only, aspect preserved); video frames scale via ffmpeg
+(`scale='min(cap,iw)':-2`, which caps **width** and keeps aspect); a rendered **PDF
+page** and the **contact sheet** have no native pixel size, so when *no* cap is set
+they fall back to a 1024-px render target rather than "native". Without Pillow, still
+images are returned at native resolution (the cap is ignored).
+
+Separately, **`format` / `quality`** (video tools) — `png` vs `jpeg` + quality —
+control the encoded **byte** size. (`read_file` images are always PNG.)
 
 ### Video options
 

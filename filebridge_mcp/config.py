@@ -12,20 +12,22 @@ DEFAULT_LINES = 400  # default text window (lines) when caller omits limit
 MAX_LINES = 5000  # hard ceiling per read_file call
 DEFAULT_FRAMES = 8  # default frames sampled across a video slice
 MAX_FRAMES = 64
-DEFAULT_MAX_DIM = 1024  # cap longest image/frame edge (VRAM/encode cost lever)
+PDF_RENDER_DIM = 1024  # fallback render size for PDF pages / contact sheets when no cap
+                       # is set (vector pages & composites have no native pixel size)
 HEXDUMP_BYTES = 256  # bytes shown for unknown-binary reads
 TEXT_SNIFF_BYTES = 4096  # bytes sampled to decide "is this text?"
 GREP_MAX_FILE = 5_000_000  # skip files larger than this when grepping
 
 
-def clamp_dim(requested: int, ceiling: "int | None") -> int:
-    """Apply an optional server-side ceiling to a caller-requested image dimension.
+def resolve_dim(requested: "int | None", limit: "int | None") -> "int | None":
+    """Combine the caller's per-call cap with the operator's CLI cap.
 
-    Returns the smaller of the two when a ceiling is set (so the operator's
-    `--max-image-dimension` wins over whatever the model asks for); otherwise the
-    request stands.
+    Both are optional. The effective longest-edge cap is the *smaller* of whichever
+    are present; if neither is set the result is ``None`` — meaning **no cap**, i.e.
+    the image/frame is returned at native resolution.
     """
-    return min(requested, ceiling) if ceiling else requested
+    caps = [c for c in (requested, limit) if c]
+    return min(caps) if caps else None
 
 
 # --- Extension sets ---------------------------------------------------------
