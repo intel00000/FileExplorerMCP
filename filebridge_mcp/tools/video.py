@@ -11,6 +11,10 @@ Cross-cutting options on the frame tools:
                     the frames dir and returns PATHS instead. The 'file' mode is the
                     §9 mtmd fallback: when a host can't route inline base64 into the
                     vision encoder, it attaches the saved file as a real image instead.
+
+Every inline image block carries `_meta` ({path, timestamp_sec, frame_index, ...})
+so the host can isolate AND identify a frame without depending on block order; a
+frame that fails to extract emits a JSON error block tagged with the same index.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from pydantic import Field
 from .. import deps
 from ..config import DEFAULT_FRAMES, DEFAULT_MAX_DIM, MAX_FRAMES, RO
 from ..media import compose
+from ..media.images import image_content
 from ..media.video import duration, extract_frame, ffprobe, norm_format
 from ..sandbox import Root
 
@@ -114,8 +119,7 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
         if output == "file":
             return json.dumps({"path": root.rel(p), "timestamp_sec": round(t, 3),
                                "frame_path": _save_frame(data, p, t, fmt), "format": fmt}, indent=2)
-        from mcp.server.fastmcp import Image
-        return Image(data=data, format=fmt)
+        return image_content(data, fmt, {"path": root.rel(p), "timestamp_sec": round(t, 3)})
 
     @mcp.tool(name="video_frames", annotations={"title": "Sample frames across a slice", **RO})
     def video_frames(
@@ -172,13 +176,13 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
                     frames.append({"timestamp_sec": t, "error": str(e)})
             return json.dumps({"path": root.rel(p), "format": fmt, "frames": frames}, indent=2)
 
-        from mcp.server.fastmcp import Image
         results: list = [json.dumps({"path": root.rel(p), "timestamps_sec": stamps})]
-        for t in stamps:
+        for i, t in enumerate(stamps):
             try:
-                results.append(Image(data=extract_frame(p, t, max_dimension, fmt, quality), format=fmt))
+                data = extract_frame(p, t, max_dimension, fmt, quality)
+                results.append(image_content(data, fmt, {"path": root.rel(p), "timestamp_sec": t, "frame_index": i}))
             except Exception as e:
-                results.append(json.dumps({"error": f"frame at {t}s failed: {e}"}))
+                results.append(json.dumps({"error": f"frame at {t}s failed: {e}", "frame_index": i, "timestamp_sec": t}))
         return results
 
     @mcp.tool(name="video_contact_sheet", annotations={"title": "Tile frames into one image", **RO})
@@ -242,5 +246,5 @@ def register(mcp, root: Root, *, frames_dir: Optional[Path] = None) -> None:
             out.write_bytes(sheet)
             return json.dumps({"path": root.rel(p), "frame_count": len(tiles), "cols": cols,
                                "sheet_path": root.rel(out), "format": fmt}, indent=2)
-        from mcp.server.fastmcp import Image
-        return Image(data=sheet, format=fmt)
+        return image_content(sheet, fmt, {"path": root.rel(p), "kind": "contact_sheet",
+                                          "frame_count": len(tiles), "cols": cols})

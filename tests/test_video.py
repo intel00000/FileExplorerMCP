@@ -51,6 +51,27 @@ def test_percent_seek_returns_image(video_root):
     assert len(_images(_call(mcp, "video_frame", path="clip.mp4", percent=50))) == 1
 
 
+def test_frame_meta_identifies_image(video_root):
+    mcp = build_server(Root(video_root))
+    img = _images(_call(mcp, "video_frame", path="clip.mp4", timestamp=1.5))[0]
+    assert img.meta == {"path": "clip.mp4", "timestamp_sec": 1.5}
+
+
+def test_frames_meta_carries_index_and_timestamp(video_root):
+    mcp = build_server(Root(video_root))
+    imgs = _images(_call(mcp, "video_frames", path="clip.mp4", timestamps=[0.5, 1.5]))
+    assert [i.meta["frame_index"] for i in imgs] == [0, 1]
+    assert [i.meta["timestamp_sec"] for i in imgs] == [0.5, 1.5]
+    assert all(i.meta["path"] == "clip.mp4" for i in imgs)
+
+
+def test_contact_sheet_meta(video_root):
+    mcp = build_server(Root(video_root))
+    img = _images(_call(mcp, "video_contact_sheet", path="clip.mp4", count=4, cols=2))[0]
+    assert img.meta["kind"] == "contact_sheet"
+    assert img.meta["cols"] == 2 and img.meta["path"] == "clip.mp4"
+
+
 def test_frame_requires_timestamp_or_percent(video_root):
     mcp = build_server(Root(video_root))
     payload = json.loads(_call(mcp, "video_frame", path="clip.mp4")[0].text)
