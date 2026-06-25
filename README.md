@@ -70,6 +70,56 @@ takes precedence.
 | Mutate  | `write_file`, `make_dir`, `move`, `delete` | **opt-in only** — `--allow-write` / `--allow-delete`; `move`/`delete` carry `destructiveHint` |
 | Video   | `video_info`, `video_frame`, `video_frames`, `video_contact_sheet` | probe; single-frame seek (by seconds or `percent`); frame set (even slice or explicit `timestamps`); N frames tiled into one labeled image |
 
+### File types & return formats
+
+`read_file` is the type-dispatched reader: it detects each file's **kind** (magic
+bytes → extension → UTF-8 sniff) and projects it into one of two channels — a
+**JSON string** (text channel) or an **`ImageContent`** block (vision channel).
+Errors are always returned as JSON `{"error": "…"}`, never raised, so the model
+can read and react.
+
+| kind | detected by | `read_file` returns |
+|------|-------------|---------------------|
+| **text** | UTF-8 sniff of the first 4 KB (a NUL byte ⇒ not text) | **JSON** `{path, kind:"text", total_lines, offset, returned_lines, next_offset, content}` — a streamed line window `[offset, offset+limit)`; page forward with `next_offset` (null when exhausted) |
+| **image** | PNG/JPEG/GIF/BMP magic, or image ext (`.webp/.tiff/…`) | **Image**, downscaled to `max_dimension`, `_meta={path, kind:"image"}` (mime preserved: png/jpeg/gif/webp/bmp/tiff). Corrupt/undecodable ⇒ JSON `{error}` |
+| **pdf** | `%PDF` magic | default → **JSON** `{path, kind:"pdf", total_pages, offset, next_offset, content}` (page-range *text*). With `render_page=true` → **Image** of the page at `offset`, `_meta={path, kind:"pdf_page", page}`. No PyMuPDF ⇒ JSON `{error}` |
+| **office** | `.docx/.pptx/.xlsx` + `PK\x03\x04` zip magic | **JSON** note `{path, kind:"office", mime, note}` — not parsed (extension point) |
+| **archive** | `.zip/.tar/…` or `PK\x03\x04` zip magic | **JSON** note `{path, kind:"archive", note}` — entries not listed (extension point) |
+| **video** | video extension (`.mp4/.mkv/.mov/…`) | **JSON** note `{path, kind:"video", mime, note}` → use `video_frame` / `video_frames` / `video_contact_sheet` to see footage |
+| **audio** | audio extension (`.mp3/.wav/.flac/…`) | **JSON** note `{path, kind:"audio", mime, note}` — transcription is an extension point |
+| **binary** | fallthrough | **JSON** `{path, kind:"binary", mime, size, shown_bytes, hexdump}` — hexdump of the first 256 bytes, never the raw blob |
+
+**Detection order** ([detect.py](filebridge_mcp/detect.py)): video/audio/office by
+**extension** → **magic bytes** (PNG/JPEG/GIF/BMP/PDF) → `PK` zip (office vs
+archive) → image/archive extension → UTF-8 **sniff** → `binary`. Magic bytes win
+over a misleading extension, since the server crawls a real, possibly mislabeled
+folder.
+
+**Image-returning tools** (vision channel) — every one emits a typed
+`ImageContent` carrying `_meta` for identity (see [Image identity](#image-identity-_meta)):
+
+| tool | returns (`output="inline"`, the default) | with `output="file"` |
+|------|------------------------------------------|----------------------|
+| `read_file` (image / `render_page`) | one **Image** + `_meta` | — (image already on disk) |
+| `video_frame` | one **Image**, `_meta={path, timestamp_sec}` | JSON `{path, timestamp_sec, frame_path, format}` |
+| `video_frames` | **list**: summary JSON + N **Images**, each `_meta={path, timestamp_sec, frame_index}`; a failed frame ⇒ error JSON with the same `frame_index` | JSON `{path, format, frames:[{timestamp_sec, frame_path}]}` |
+| `video_contact_sheet` | one tiled **Image**, `_meta={path, kind:"contact_sheet", frame_count, cols}` | JSON `{path, frame_count, cols, sheet_path, format}` |
+
+**Text-only tools** (JSON, straight into context) — never reach the vision channel:
+
+| tool | returns |
+|------|---------|
+| `list_dir` | `{path, entries:[{path, type, size, mtime}], truncated}` (`type` = `dir` or a detected kind) |
+| `stat` | `{path, exists, is_dir, kind, mime, size, mtime}` (+ `duration_sec/width/height/codec` for media when ffmpeg present) |
+| `read_bytes` | `{path, offset, length, total_size, hexdump}` |
+| `glob` | `{pattern, count, truncated, paths}` |
+| `grep` | `{pattern, count, truncated, matches:[{path, line, text}]}` (text files only) |
+| `video_info` | `{path, duration_sec, width, height, fps, codec, has_audio}` |
+| `write_file` | `{path, mode, bytes_written}` |
+| `make_dir` | `{path, created}` |
+| `move` | `{src, dst}` |
+| `delete` | `{path, deleted}` |
+
 ### Video options
 
 The frame tools share these knobs:
