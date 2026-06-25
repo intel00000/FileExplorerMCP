@@ -18,6 +18,8 @@ def register_all(
     allow_delete: bool = False,
     frames_dir: Optional[Path] = None,
     max_image_dim: Optional[int] = None,
+    image_format: Optional[str] = None,
+    image_quality: Optional[int] = None,
 ) -> None:
     """Register the tool catalog on `mcp`, all confined to `root`.
 
@@ -26,10 +28,24 @@ def register_all(
     move/delete. With both False (default) the server is strictly read-only.
     `frames_dir` is where video file-output mode materializes frames (default
     ``<root>/.filebridge_frames``). `max_image_dim`, if set, is a server-side
-    ceiling clamped onto every image/frame's `max_dimension`.
+    ceiling clamped onto every image/frame's `max_dimension`. `image_format` /
+    `image_quality` are server-side encoding defaults the model can override per call.
     """
     explore.register(mcp, root)
-    read.register(mcp, root, max_image_dim=max_image_dim)
+    read.register(
+        mcp,
+        root,
+        max_image_dim=max_image_dim,
+        image_format=image_format,
+        image_quality=image_quality,
+    )
     search.register(mcp, root)
     mutate.register(mcp, root, allow_write=allow_write, allow_delete=allow_delete)
-    video.register(mcp, root, frames_dir=frames_dir, max_image_dim=max_image_dim)
+    video.register(
+        mcp,
+        root,
+        frames_dir=frames_dir,
+        max_image_dim=max_image_dim,
+        image_format=image_format,
+        image_quality=image_quality,
+    )

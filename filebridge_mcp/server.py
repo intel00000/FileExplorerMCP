@@ -43,6 +43,8 @@ def build_server(
     http_path: str = "/mcp",
     auth_token: "str | None" = None,
     max_image_dim: "int | None" = None,
+    image_format: "str | None" = None,
+    image_quality: "int | None" = None,
 ) -> FastMCP:
     """Create a FastMCP server with the tool catalog bound to `root`.
 
@@ -54,7 +56,9 @@ def build_server(
     HTTP request (HTTP transport only). `max_image_dim`, if set, caps every
     image/frame's longest edge server-side (overriding larger per-call requests);
     unset means no server cap — the per-call `max_dimension` alone decides, and
-    omitting both returns native resolution.
+    omitting both returns native resolution. `image_format` / `image_quality` are
+    server-side encoding defaults (png/jpeg, 1..100) that a per-call `format` /
+    `quality` overrides.
     """
     auth_kwargs: dict = {}
     if auth_token:
@@ -86,6 +90,8 @@ def build_server(
         allow_delete=allow_delete,
         frames_dir=frames_dir,
         max_image_dim=max_image_dim,
+        image_format=image_format,
+        image_quality=image_quality,
     )
     return mcp
 
@@ -156,6 +162,22 @@ def main() -> None:
         "are returned at native resolution.",
     )
     ap.add_argument(
+        "--image-format",
+        choices=["png", "jpeg"],
+        default=None,
+        help="Default encoding for returned images/frames: png (lossless) or jpeg "
+        "(smaller). The model can override per call. Default: native for read_file "
+        "images, png for video frames, jpeg for contact sheets.",
+    )
+    ap.add_argument(
+        "--image-quality",
+        type=int,
+        default=None,
+        metavar="1-100",
+        help="Default JPEG quality (1-100, higher=better) when images are encoded as "
+        "jpeg. The model can override per call. Default: 85.",
+    )
+    ap.add_argument(
         "--http", action="store_true", help="Use streamable HTTP instead of stdio."
     )
     ap.add_argument(
@@ -190,6 +212,9 @@ def main() -> None:
 
     allow_write = args.allow_write or args.allow_all
     allow_delete = args.allow_delete or args.allow_all
+    image_quality = (
+        max(1, min(100, args.image_quality)) if args.image_quality is not None else None
+    )
 
     cors_origins: list[str] = []
     for item in args.cors_origin or []:
@@ -218,6 +243,8 @@ def main() -> None:
         http_path=args.http_path,
         auth_token=auth_token,
         max_image_dim=args.max_image_dimension,
+        image_format=args.image_format,
+        image_quality=image_quality,
     )
 
     enabled = ["read-only core"]

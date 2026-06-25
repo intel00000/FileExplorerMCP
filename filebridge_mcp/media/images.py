@@ -16,9 +16,12 @@ from mcp.server.fastmcp import Image
 from mcp.types import ImageContent
 
 from .. import deps
+from .video import norm_format
 
 
-def image_content(data: bytes, fmt: str = "png", meta: Optional[dict] = None) -> ImageContent:
+def image_content(
+    data: bytes, fmt: str = "png", meta: Optional[dict] = None
+) -> ImageContent:
     """Build an MCP ImageContent from raw bytes, stamping `_meta` for identity.
 
     Returning a typed ImageContent (rather than the bare FastMCP `Image`) lets us
@@ -31,18 +34,29 @@ def image_content(data: bytes, fmt: str = "png", meta: Optional[dict] = None) ->
     return ImageContent(type="image", data=b64, mimeType=mime, _meta=meta or None)
 
 
-def downscaled_image(p: Path, max_dim: Optional[int]) -> Image:
-    """Return a FastMCP `Image` for an image file, optionally downscaled.
+def downscaled_image(
+    p: Path,
+    max_dim: Optional[int],
+    fmt: Optional[str] = None,
+    quality: Optional[int] = None,
+) -> Image:
+    """Return a FastMCP `Image` for an image file, optionally resized and/or re-encoded.
 
-    `thumbnail` only ever shrinks, so a smaller-than-`max_dim` image is returned
-    near-unchanged (re-encoded to PNG). Without Pillow, the file is handed off
-    by path and the format is inferred from its extension.
+    Re-encodes (via Pillow) when a `max_dim` cap is given OR a `fmt` is requested:
+    `thumbnail` only ever shrinks (aspect preserved); `fmt` picks png (lossless) or
+    jpeg (`quality` 1..100, default 85). When neither is set — or Pillow is absent —
+    the file is handed off by path at native resolution/format.
     """
-    if max_dim and deps.HAVE_PIL:
+    if (max_dim or fmt) and deps.HAVE_PIL:
         with deps.PILImage.open(p) as im:
             im = im.convert("RGB")
-            im.thumbnail((max_dim, max_dim))
+            if max_dim:
+                im.thumbnail((max_dim, max_dim))
+            out = norm_format(fmt)  # None -> "png"
             buf = io.BytesIO()
-            im.save(buf, format="PNG")
-            return Image(data=buf.getvalue(), format="png")
-    return Image(path=str(p))  # format inferred from extension
+            if out == "jpeg":
+                im.save(buf, format="JPEG", quality=quality or 85)
+            else:
+                im.save(buf, format="PNG")
+            return Image(data=buf.getvalue(), format=out)
+    return Image(path=str(p))  # native resolution + format inferred from extension

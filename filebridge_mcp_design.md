@@ -123,8 +123,8 @@ Cheap metadata for one path; call before `read_file` to size up a file. Returns 
 
 #### Read
 
-**`read_file(path, offset=1, limit=400, max_dimension=null, render_page=false)`** — RO
-The type-dispatched reader (see §5.2 mapping). For text, returns `{path, kind:"text", total_lines, offset, returned_lines, next_offset, content}`. For images, returns the (downscaled) image. For PDFs, returns page-range text with `next_offset`, or — with `render_page=true` — the single page at `offset` rasterized to an image. For video/audio/office/archive/binary, returns the channel-appropriate result from the mapping table. `offset`/`limit` are lines for text and pages for PDF; `max_dimension` optionally caps image/render output (omit for native resolution — see §5.1 Bounds); `render_page` applies only to PDFs.
+**`read_file(path, offset=1, limit=400, max_dimension=null, render_page=false, format=null, quality=null)`** — RO
+The type-dispatched reader (see §5.2 mapping). For text, returns `{path, kind:"text", total_lines, offset, returned_lines, next_offset, content}`. For images, returns the (downscaled) image. For PDFs, returns page-range text with `next_offset`, or — with `render_page=true` — the single page at `offset` rasterized to an image. For video/audio/office/archive/binary, returns the channel-appropriate result from the mapping table. `offset`/`limit` are lines for text and pages for PDF; `max_dimension` optionally caps image/render output (omit for native resolution — see §5.1 Bounds); `render_page` applies only to PDFs. `format`/`quality` (png/jpeg, 1..100) re-encode the returned image/PDF-page (omit → native for images, png for renders); they resolve model → `--image-format`/`--image-quality` → built-in (see §5.4).
 
 **`read_bytes(path, offset=0, length=256)`** — RO
 Hexdump an arbitrary byte slice of any file, for inspecting binary formats. `length` ≤ 4096. Returns `{path, offset, length, total_size, hexdump}`.
@@ -165,7 +165,7 @@ The **slice / set** view: either evenly sample `count` frames (≤ 64) across `[
 **`video_contact_sheet(path, count=12, cols=4, start=0, end=null, max_dimension=null, format="jpeg", quality=85, output="inline")`** — RO
 Tile `count` evenly-spaced, timestamp-labeled frames into **one** composite image (`cols` wide). A single image costs far fewer vision tokens than `count` separate frames — ideal for a first-pass overview before zooming in with `video_frame`. Requires Pillow. Returns an image, or a saved sheet path with `output="file"`.
 
-**Shared frame options.** `max_dimension` optionally caps the frame's longest edge (omit for native; effective cap = smaller of this and `--max-image-dimension`, or none — §5.1). `format` is `png` (lossless) or `jpeg` (much smaller; `quality` 1–100). `output="file"` materializes frames under the frames dir (`<root>/.filebridge_frames`, override with `--frames-dir`) and returns *paths* instead of base64 — this is the §9 mtmd fallback, exposed as a per-call option. It is the only write the read-only server performs.
+**Shared frame options.** `max_dimension` optionally caps the frame's longest edge (omit for native; effective cap = smaller of this and `--max-image-dimension`, or none — §5.1). `format` is `png` (lossless) or `jpeg` (much smaller; `quality` 1–100); both are optional and resolve **model → server default (`--image-format` / `--image-quality`) → built-in** (png for frames, jpeg for the contact sheet, quality 85), so an operator can default the whole server to JPEG while any call may still override. The same `format`/`quality` knobs and precedence apply to `read_file` images and PDF-page renders. `output="file"` materializes frames under the frames dir (`<root>/.filebridge_frames`, override with `--frames-dir`) and returns *paths* instead of base64 — this is the §9 mtmd fallback, exposed as a per-call option. It is the only write the read-only server performs.
 
 ### 5.4 Frame extraction mechanics
 

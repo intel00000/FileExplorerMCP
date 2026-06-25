@@ -179,8 +179,25 @@ page** and the **contact sheet** have no native pixel size, so when *no* cap is 
 they fall back to a 1024-px render target rather than "native". Without Pillow, still
 images are returned at native resolution (the cap is ignored).
 
-Separately, **`format` / `quality`** (video tools) — `png` vs `jpeg` + quality —
-control the encoded **byte** size. (`read_file` images are always PNG.)
+Separately, **`format` / `quality`** control the encoded **byte** size — `png`
+(lossless) vs `jpeg` + `quality` 1–100. These apply to **every** image-returning
+tool (`read_file` images and PDF-page renders, plus the video frame tools). Like the
+resolution cap, they resolve **model per-call → server default → built-in**:
+
+| layer | how to set | precedence |
+|---|---|---|
+| per-call | `format` / `quality` tool args | **wins** when given |
+| server default | `--image-format {png,jpeg}` / `--image-quality 1-100` | used when the model omits |
+| built-in | — | native for `read_file` images, png for frames, jpeg for contact sheets; quality 85 |
+
+```bash
+uv run filebridge-mcp --root /path --image-format jpeg --image-quality 70   # default everything to jpeg@70
+```
+
+So `--image-format jpeg` makes the server return JPEG by default everywhere, and a
+model that needs lossless can still pass `format="png"` on a specific call (and
+likewise raise/lower `quality`). JPEG re-encoding of `read_file` images needs Pillow;
+without it those images fall back to native format.
 
 ### Video options
 

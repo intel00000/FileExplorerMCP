@@ -33,11 +33,15 @@ from ..media.video import duration, extract_frame, ffprobe, norm_format
 from ..sandbox import Root
 
 _FMT = Field(
-    description="Frame encoding: 'png' (lossless) or 'jpeg' (smaller).",
+    description="Frame encoding: 'png' (lossless) or 'jpeg' (smaller). Omit to use the "
+    "server default (--image-format), else png (frames) / jpeg (contact sheet).",
     pattern="^(png|jpe?g)$",
 )
 _QUALITY = Field(
-    description="JPEG quality 1..100 (higher=better); ignored for png.", ge=1, le=100
+    description="JPEG quality 1..100 (higher=better); ignored for png. Omit to use the "
+    "server default (--image-quality), else 85.",
+    ge=1,
+    le=100,
 )
 _OUTPUT = Field(
     description="'inline' returns image content; 'file' writes it and returns a path.",
@@ -57,6 +61,8 @@ def register(
     *,
     frames_dir: Optional[Path] = None,
     max_image_dim: Optional[int] = None,
+    image_format: Optional[str] = None,
+    image_quality: Optional[int] = None,
 ) -> None:
     cache_dir = (
         frames_dir if frames_dir is not None else (root.base / ".filebridge_frames")
@@ -134,8 +140,8 @@ def register(
             ),
         ] = None,
         max_dimension: Annotated[Optional[int], _MAXDIM] = None,
-        format: Annotated[str, _FMT] = "png",
-        quality: Annotated[int, _QUALITY] = 85,
+        format: Annotated[Optional[str], _FMT] = None,
+        quality: Annotated[Optional[int], _QUALITY] = None,
         output: Annotated[str, _OUTPUT] = "inline",
     ):
         """Return a single frame, by absolute `timestamp` (seconds) or by `percent`.
@@ -150,7 +156,8 @@ def register(
         p = root.resolve(path)
         if not p.is_file():
             return json.dumps({"error": f"Not a file: {path}"})
-        fmt = norm_format(format)
+        fmt = norm_format(format or image_format or "png")
+        q = quality or image_quality or 85
         try:
             if percent is not None:
                 t = max(0.0, min(100.0, percent)) / 100.0 * duration(p)
@@ -161,7 +168,7 @@ def register(
                     {"error": "Provide timestamp (seconds) or percent (0-100)."}
                 )
             data = extract_frame(
-                p, t, resolve_dim(max_dimension, max_image_dim), fmt, quality
+                p, t, resolve_dim(max_dimension, max_image_dim), fmt, q
             )
         except Exception as e:
             return json.dumps({"error": f"Frame extraction failed: {e}"})
@@ -204,8 +211,8 @@ def register(
             Field(description="Explicit seconds to grab (overrides start/end/count)."),
         ] = None,
         max_dimension: Annotated[Optional[int], _MAXDIM] = None,
-        format: Annotated[str, _FMT] = "png",
-        quality: Annotated[int, _QUALITY] = 85,
+        format: Annotated[Optional[str], _FMT] = None,
+        quality: Annotated[Optional[int], _QUALITY] = None,
         output: Annotated[str, _OUTPUT] = "inline",
     ):
         """Sample frames as a set: evenly across [start, end], or at explicit `timestamps`.
@@ -222,7 +229,8 @@ def register(
         if not p.is_file():
             msg = json.dumps({"error": f"Not a file: {path}"})
             return [msg] if output == "inline" else msg
-        fmt = norm_format(format)
+        fmt = norm_format(format or image_format or "png")
+        q = quality or image_quality or 85
         dim = resolve_dim(max_dimension, max_image_dim)
         try:
             dur = duration(p)
@@ -257,7 +265,7 @@ def register(
                         {
                             "timestamp_sec": t,
                             "frame_path": _save_frame(
-                                extract_frame(p, t, dim, fmt, quality), p, t, fmt
+                                extract_frame(p, t, dim, fmt, q), p, t, fmt
                             ),
                         }
                     )
@@ -270,7 +278,7 @@ def register(
         results: list = [json.dumps({"path": root.rel(p), "timestamps_sec": stamps})]
         for i, t in enumerate(stamps):
             try:
-                data = extract_frame(p, t, dim, fmt, quality)
+                data = extract_frame(p, t, dim, fmt, q)
                 results.append(
                     image_content(
                         data,
@@ -309,8 +317,8 @@ def register(
             Field(description="Slice end in seconds; omit for end of video"),
         ] = None,
         max_dimension: Annotated[Optional[int], _MAXDIM] = None,
-        format: Annotated[str, _FMT] = "jpeg",
-        quality: Annotated[int, _QUALITY] = 85,
+        format: Annotated[Optional[str], _FMT] = None,
+        quality: Annotated[Optional[int], _QUALITY] = None,
         output: Annotated[str, _OUTPUT] = "inline",
     ):
         """Tile `count` evenly-spaced, timestamp-labeled frames into ONE image.
@@ -329,7 +337,8 @@ def register(
         p = root.resolve(path)
         if not p.is_file():
             return json.dumps({"error": f"Not a file: {path}"})
-        fmt = norm_format(format)
+        fmt = norm_format(format or image_format or "jpeg")
+        q = quality or image_quality or 85
         # A contact sheet must have a bounded overall size, so an uncapped (None)
         # request falls back to a sane composite size rather than tiling native frames.
         dim = resolve_dim(max_dimension, max_image_dim) or PDF_RENDER_DIM
@@ -364,7 +373,7 @@ def register(
                 {"error": "No frames could be extracted for the contact sheet."}
             )
         try:
-            sheet = compose.contact_sheet(tiles, cols, dim, fmt, quality)
+            sheet = compose.contact_sheet(tiles, cols, dim, fmt, q)
         except RuntimeError as e:
             return json.dumps({"error": str(e)})
 

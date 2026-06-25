@@ -118,6 +118,22 @@ def test_jpeg_is_smaller_than_png(video_root):
     assert len(jpg) < len(png)
 
 
+def test_cli_image_format_default_and_model_override(video_root):
+    # CLI sets jpeg as the default encoding for frames...
+    mcp = build_server(Root(video_root), image_format="jpeg")
+    assert (
+        _images(_call(mcp, "video_frame", path="clip.mp4", timestamp=1))[0].mimeType
+        == "image/jpeg"
+    )
+    # ...and the model can still override it per call.
+    assert (
+        _images(_call(mcp, "video_frame", path="clip.mp4", timestamp=1, format="png"))[
+            0
+        ].mimeType
+        == "image/png"
+    )
+
+
 def test_explicit_timestamps(video_root):
     mcp = build_server(Root(video_root))
     blocks = _call(mcp, "video_frames", path="clip.mp4", timestamps=[0.5, 1.5, 2.5])

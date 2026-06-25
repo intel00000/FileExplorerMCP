@@ -169,6 +169,25 @@ def test_cli_cap_overrides_native(tmp_path):
     assert max(_read_image_size(mcp, "big.png")) <= 256
 
 
+def test_cli_image_format_applies_and_model_overrides(tmp_path):
+    PILImage = pytest.importorskip("PIL.Image")
+    PILImage.new("RGB", (40, 30), (1, 2, 3)).save(tmp_path / "p.png", format="PNG")
+
+    def mime(mcp, **kw):
+        blocks = _blocks(
+            asyncio.run(mcp.call_tool("read_file", {"path": "p.png", **kw}))
+        )
+        return next(b for b in blocks if b.type == "image").mimeType
+
+    # No CLI default, model omits -> native (source is PNG).
+    assert mime(build_server(Root(tmp_path))) == "image/png"
+    # CLI default jpeg -> read_file image comes back jpeg.
+    jpeg_srv = build_server(Root(tmp_path), image_format="jpeg")
+    assert mime(jpeg_srv) == "image/jpeg"
+    # Per-call format overrides the CLI default.
+    assert mime(jpeg_srv, format="png") == "image/png"
+
+
 def test_no_auth_by_default(tmp_path):
     assert build_server(Root(tmp_path)).settings.auth is None
 

@@ -24,10 +24,27 @@ from ..config import (
 )
 from ..detect import detect_kind, hexdump
 from ..media.images import downscaled_image, image_content
+from ..media.video import norm_format
 from ..sandbox import Root
 
+_FMT = Field(
+    description="Image encoding for image/PDF-render output: 'png' (lossless) or "
+    "'jpeg' (smaller). Omit to use the server default (native for images).",
+    pattern="^(png|jpe?g)$",
+)
+_QUALITY = Field(
+    description="JPEG quality 1..100 (higher=better); ignored for png.", ge=1, le=100
+)
 
-def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
+
+def register(
+    mcp,
+    root: Root,
+    *,
+    max_image_dim: Optional[int] = None,
+    image_format: Optional[str] = None,
+    image_quality: Optional[int] = None,
+) -> None:
     @mcp.tool(name="read_file", annotations={"title": "Read file content", **RO})
     def read_file(
         path: Annotated[str, Field(description="File relative to root")],
@@ -62,6 +79,8 @@ def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
                 description="For PDFs: return the page at `offset` as an image instead of text."
             ),
         ] = False,
+        format: Annotated[Optional[str], _FMT] = None,
+        quality: Annotated[Optional[int], _QUALITY] = None,
     ):
         """Read one file, projecting it into text or image based on detected type.
 
@@ -108,12 +127,16 @@ def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
             )
 
         dim = resolve_dim(max_dimension, max_image_dim)
+        # Per-call format/quality win; else the server default; else native (image)
+        # or png (PDF render). `img_fmt` None means "leave images in native format".
+        img_fmt = format or image_format
+        img_q = quality or image_quality
 
         if kind == "image":
             try:
                 # Convert to ImageContent (preserves mime for png/jpeg/gif/webp/bmp/tiff)
                 # and stamp _meta so the host can identify the image, like the video tools.
-                ic = downscaled_image(p, dim).to_image_content()
+                ic = downscaled_image(p, dim, img_fmt, img_q).to_image_content()
                 ic.meta = {"path": root.rel(p), "kind": "image"}
                 return ic
             except (
@@ -142,9 +165,15 @@ def register(mcp, root: Root, *, max_image_dim: Optional[int] = None) -> None:
                     render_dim = dim if dim is not None else PDF_RENDER_DIM
                     zoom = render_dim / max(page.rect.width, page.rect.height)
                     pix = page.get_pixmap(matrix=deps.fitz.Matrix(zoom, zoom))
+                    page_fmt = norm_format(img_fmt)  # None -> "png"
+                    blob = (
+                        pix.tobytes("jpg", jpg_quality=img_q or 85)
+                        if page_fmt == "jpeg"
+                        else pix.tobytes("png")
+                    )
                     return image_content(
-                        pix.tobytes("png"),
-                        "png",
+                        blob,
+                        page_fmt,
                         {"path": root.rel(p), "kind": "pdf_page", "page": offset},
                     )
                 texts = []
