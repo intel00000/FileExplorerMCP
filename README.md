@@ -19,8 +19,15 @@ security model, and open questions.
 ```bash
 uv sync                 # core + dev (pytest)
 uv sync --extra all     # also Pillow (image downscale) + PyMuPDF (PDF)
-uv run filebridge-mcp --root /path/to/folder
+uv run filebridge-mcp --root /path/to/folder                      # read-only
+uv run filebridge-mcp --root /path/to/folder --allow-write        # + write_file/make_dir
+uv run filebridge-mcp --root /path/to/folder --allow-write --allow-delete   # + move/delete
 ```
+
+**The server is read-only by default.** The mutating tools are not even registered
+unless you opt in at launch: `--allow-write` enables `write_file`/`make_dir`,
+`--allow-delete` enables `move`/`delete`. An unregistered tool is invisible to the
+model — a stronger guarantee than trusting the host to honor `destructiveHint`.
 
 Or with plain pip:
 
@@ -60,7 +67,7 @@ takes precedence.
 | Explore | `list_dir`, `stat` | tree listing with detected kinds; cheap metadata (probes media when ffmpeg present) |
 | Read    | `read_file`, `read_bytes` | type-dispatched projection; arbitrary byte hexdump |
 | Search  | `glob`, `grep` | both re-checked for sandbox containment; grep is text-only |
-| Mutate  | `write_file`, `make_dir`, `move`, `delete` | `move`/`delete` carry `destructiveHint` |
+| Mutate  | `write_file`, `make_dir`, `move`, `delete` | **opt-in only** — `--allow-write` / `--allow-delete`; `move`/`delete` carry `destructiveHint` |
 | Video   | `video_info`, `video_frame`, `video_frames` | probe, agentic single-frame seek, time-slice frame set |
 
 ## Module layout
@@ -87,8 +94,11 @@ SDK, so the security core can be tested in a minimal environment (see `tests/`).
 
 All access is confined to `--root` via *resolve-then-contain* (D5): every path —
 including `glob`/`grep` results reached through symlinks — is fully resolved and
-re-checked against the root before use. Still, the server grants full read/write
-**within** the root: point it only at a folder you are willing to expose. HTTP mode
+re-checked against the root before use. The server is **read-only by default**;
+writing and deleting require explicit `--allow-write` / `--allow-delete` at launch,
+and the tools are not registered otherwise. Even so, an enabled root grants full
+read/write **within** it: point it only at a folder you are willing to expose.
+HTTP mode
 has **no authentication** in this version — do not expose it on an untrusted
 network without putting auth in front of it. Treat file *contents* as untrusted
 input to the model (prompt-injection risk).

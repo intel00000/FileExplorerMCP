@@ -68,29 +68,35 @@ def register(mcp, root: Root) -> None:
             }, indent=2)
 
         if kind == "image":
-            return downscaled_image(p, max_dimension)
+            try:
+                return downscaled_image(p, max_dimension)
+            except Exception as e:  # corrupt/truncated/unsupported image — report, don't crash
+                return json.dumps({"error": f"Could not open image '{root.rel(p)}': {e}"})
 
         if kind == "pdf":
             if not deps.HAVE_FITZ:
                 return json.dumps({"error": deps.PDF_MISSING})
             from mcp.server.fastmcp import Image
-            doc = deps.fitz.open(p)
-            n = doc.page_count
-            if render_page:
-                if offset > n:
-                    return json.dumps({"error": f"PDF has {n} pages; offset {offset} out of range"})
-                page = doc.load_page(offset - 1)
-                zoom = max_dimension / max(page.rect.width, page.rect.height)
-                pix = page.get_pixmap(matrix=deps.fitz.Matrix(zoom, zoom))
-                return Image(data=pix.tobytes("png"), format="png")
-            texts = []
-            for i in range(offset - 1, min(offset - 1 + limit, n)):
-                texts.append(f"--- page {i + 1} ---\n{doc.load_page(i).get_text()}")
-            nxt = offset + limit
-            return json.dumps({
-                "path": root.rel(p), "kind": "pdf", "total_pages": n, "offset": offset,
-                "next_offset": nxt if nxt <= n else None, "content": "\n".join(texts),
-            }, indent=2)
+            try:
+                doc = deps.fitz.open(p)
+                n = doc.page_count
+                if render_page:
+                    if offset > n:
+                        return json.dumps({"error": f"PDF has {n} pages; offset {offset} out of range"})
+                    page = doc.load_page(offset - 1)
+                    zoom = max_dimension / max(page.rect.width, page.rect.height)
+                    pix = page.get_pixmap(matrix=deps.fitz.Matrix(zoom, zoom))
+                    return Image(data=pix.tobytes("png"), format="png")
+                texts = []
+                for i in range(offset - 1, min(offset - 1 + limit, n)):
+                    texts.append(f"--- page {i + 1} ---\n{doc.load_page(i).get_text()}")
+                nxt = offset + limit
+                return json.dumps({
+                    "path": root.rel(p), "kind": "pdf", "total_pages": n, "offset": offset,
+                    "next_offset": nxt if nxt <= n else None, "content": "\n".join(texts),
+                }, indent=2)
+            except Exception as e:  # damaged/encrypted PDF — report, don't crash
+                return json.dumps({"error": f"Could not read PDF '{root.rel(p)}': {e}"})
 
         if kind == "office":
             return json.dumps({"path": root.rel(p), "kind": "office", "mime": mime,

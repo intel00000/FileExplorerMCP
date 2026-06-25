@@ -1,8 +1,11 @@
 """Mutating tools: write_file, make_dir (WRITE) and move, delete (DESTRUCTIVE).
 
-The destructive verbs carry ``destructiveHint: true`` so a host can gate them;
-`delete` additionally requires an explicit ``recursive`` flag for a non-empty
-directory (design §7).
+These are **off by default**: the server starts read-only and registers nothing
+here unless the operator opts in at launch (``--allow-write`` for write_file /
+make_dir, ``--allow-delete`` for move / delete). A tool that is never registered
+is invisible to the model — a stronger guarantee than relying on the host to honor
+the ``destructiveHint`` annotations. `delete` additionally requires an explicit
+``recursive`` flag for a non-empty directory (design §7).
 """
 
 from __future__ import annotations
@@ -17,7 +20,21 @@ from ..config import DESTRUCTIVE, WRITE
 from ..sandbox import Root
 
 
-def register(mcp, root: Root) -> None:
+def register(mcp, root: Root, *, allow_write: bool = False, allow_delete: bool = False) -> None:
+    """Register mutating tools, gated by the launch flags.
+
+    allow_write  -> write_file, make_dir
+    allow_delete -> move, delete   (the destructive verbs)
+    With both False (the default) this registers nothing and the server is
+    strictly read-only.
+    """
+    if allow_write:
+        _register_write(mcp, root)
+    if allow_delete:
+        _register_delete(mcp, root)
+
+
+def _register_write(mcp, root: Root) -> None:
     @mcp.tool(name="write_file", annotations={"title": "Write a text file", **WRITE})
     def write_file(
         path: Annotated[str, Field(description="Destination file relative to root")],
@@ -43,6 +60,8 @@ def register(mcp, root: Root) -> None:
         p.mkdir(parents=True, exist_ok=True)
         return json.dumps({"path": root.rel(p), "created": not existed})
 
+
+def _register_delete(mcp, root: Root) -> None:
     @mcp.tool(name="move", annotations={"title": "Move or rename", **DESTRUCTIVE})
     def move(
         src: Annotated[str, Field(description="Source path relative to root")],

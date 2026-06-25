@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -25,10 +26,14 @@ INSTRUCTIONS = (
 )
 
 
-def build_server(root: Root) -> FastMCP:
-    """Create a FastMCP server with every tool bound to `root`."""
+def build_server(root: Root, *, allow_write: bool = False, allow_delete: bool = False) -> FastMCP:
+    """Create a FastMCP server with the tool catalog bound to `root`.
+
+    The server is read-only unless `allow_write` / `allow_delete` opt the
+    mutating tools in (see `register_all`).
+    """
     mcp = FastMCP("filebridge_mcp", instructions=INSTRUCTIONS)
-    register_all(mcp, root)
+    register_all(mcp, root, allow_write=allow_write, allow_delete=allow_delete)
     return mcp
 
 
@@ -37,12 +42,24 @@ def main() -> None:
     ap.add_argument("--root", default=os.environ.get("MCP_ROOT", "."),
                     help="Folder to expose (all access is confined here). "
                          "Falls back to the MCP_ROOT env var, then the cwd.")
+    ap.add_argument("--allow-write", action="store_true",
+                    help="Enable write_file / make_dir (off by default — server is read-only).")
+    ap.add_argument("--allow-delete", action="store_true",
+                    help="Enable move / delete, the destructive verbs (off by default).")
     ap.add_argument("--http", action="store_true", help="Use streamable HTTP instead of stdio.")
     ap.add_argument("--port", type=int, default=8000, help="Port for --http mode.")
     args = ap.parse_args()
 
     root = Root(Path(args.root))
-    mcp = build_server(root)
+    mcp = build_server(root, allow_write=args.allow_write, allow_delete=args.allow_delete)
+
+    enabled = ["read-only core"]
+    if args.allow_write:
+        enabled.append("write")
+    if args.allow_delete:
+        enabled.append("delete")
+    print(f"filebridge_mcp: root={root.base} | enabled: {', '.join(enabled)}", file=sys.stderr)
+
     if args.http:
         mcp.run(transport="streamable_http", port=args.port)
     else:

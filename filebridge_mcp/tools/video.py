@@ -73,7 +73,7 @@ def register(mcp, root: Root) -> None:
         from mcp.server.fastmcp import Image
         try:
             return Image(data=extract_frame(p, timestamp, max_dimension), format="png")
-        except RuntimeError as e:
+        except Exception as e:
             return json.dumps({"error": f"Frame extraction failed: {e}"})
 
     @mcp.tool(name="video_frames", annotations={"title": "Sample frames across a slice", **RO})
@@ -115,6 +115,6 @@ def register(mcp, root: Root) -> None:
         for t in stamps:
             try:
                 results.append(Image(data=extract_frame(p, t, max_dimension), format="png"))
-            except RuntimeError as e:
+            except Exception as e:
                 results.append(json.dumps({"error": f"frame at {t}s failed: {e}"}))
         return results
