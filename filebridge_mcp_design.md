@@ -76,7 +76,7 @@ We chose **standalone MCP** for versatility: the same server works across all ho
 
 ### 4.3 Transports
 
-stdio is the default (the standard local-MCP transport; how hosts launch the server as a subprocess). Streamable HTTP (`--http --port N`) is available for remote or multi-client access. Transport selection does not affect tool behavior.
+stdio is the default (the standard local-MCP transport; how hosts launch the server as a subprocess). Streamable HTTP (`--http --host H --port N`) is available for remote or multi-client access; it binds `127.0.0.1` by default (local only), with `--host 0.0.0.0` to accept remote connections. Transport selection does not affect tool behavior.
 
 ---
 
@@ -279,10 +279,11 @@ stdio (typical local host config):
 
 (Or `"command": "python", "args": ["-m", "filebridge_mcp", "--root", "/path/to/folder"]`.)
 
-HTTP (remote/multi-client):
+HTTP (remote/multi-client); binds `127.0.0.1` unless `--host` is given:
 
 ```bash
-uv run filebridge-mcp --root /path/to/folder --http --port 8000
+uv run filebridge-mcp --root /path/to/folder --http --port 8000              # local only
+uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # remote
 ```
 
 The root may also be supplied via the `MCP_ROOT` environment variable; `--root` takes precedence.

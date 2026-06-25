@@ -41,8 +41,12 @@ python -m filebridge_mcp --root /path/to/folder
 Remote / multi-client (no auth — see Security):
 
 ```bash
-uv run filebridge-mcp --root /path/to/folder --http --port 8000
+uv run filebridge-mcp --root /path/to/folder --http --port 8000              # binds 127.0.0.1 (local only)
+uv run filebridge-mcp --root /path/to/folder --http --host 0.0.0.0 --port 8000  # accept remote connections
 ```
+
+`--http` binds `127.0.0.1` by default (reachable only from the same machine);
+pass `--host 0.0.0.0` (or a specific interface IP) to accept remote connections.
 
 The root may also be supplied via the `MCP_ROOT` environment variable; `--root`
 takes precedence.
@@ -166,9 +170,10 @@ writing and deleting require explicit `--allow-write` / `--allow-delete` at laun
 and the tools are not registered otherwise. Even so, an enabled root grants full
 read/write **within** it: point it only at a folder you are willing to expose.
 HTTP mode
-has **no authentication** in this version — do not expose it on an untrusted
-network without putting auth in front of it. Treat file *contents* as untrusted
-input to the model (prompt-injection risk).
+has **no authentication** in this version and binds `127.0.0.1` by default —
+`--host 0.0.0.0` opens it to the network, so do not do that on an untrusted network
+without putting auth in front of it. Treat file *contents* as untrusted input to
+the model (prompt-injection risk).
 
 ## Tests
 
