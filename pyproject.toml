@@ -23,7 +23,7 @@ Homepage = "https://modelcontextprotocol.io"
 [project.optional-dependencies]
 # Image downscaling + contact-sheet composition. Without it, images return at native size.
 image = [
-    "pillow>=12.2.0",
+    "pillow>=12.3.0",
 ]
 # PDF text extraction + page rasterization. Without it, PDF tools return an actionable error.
 pdf = [
@@ -50,7 +50,7 @@ addopts = "-q"
 # dev` or `pip install .[dev]`).
 [dependency-groups]
 dev = [
-    "pillow>=12.2.0",
+    "pillow>=12.3.0",
     "pymupdf>=1.27.2.3",
     "pytest>=9.1.1",
 ]
